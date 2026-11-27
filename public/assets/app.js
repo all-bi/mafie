@@ -107,7 +107,7 @@
             <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
             <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor"></label>
           </div>
-          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na holou kůži bez svědků. Svědek je kdokoli, kdo nehraje – živí ani mrtví hráči se nepočítají.</textarea></label>
+          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na holou kůži bez svědků. Svědkem je kterýkoli hráč, živý i mrtvý.</textarea></label>
           <div class="check-row">
             <label class="check"><input type="checkbox" name="adminPlays" checked><span><b>Hraji také</b><small>Zaživa neuvidíš nic navíc.</small></span></label>
             <label class="check"><input type="checkbox" name="showRoster"><span><b>Zobrazovat živé a mrtvé</b><small>Výchozí je úplné utajení.</small></span></label>
