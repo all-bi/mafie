@@ -22,6 +22,8 @@ export type NoteKind =
   | 'kill_rejected'
   | 'appeal_rejected'
   | 'game_started'
+  | 'kill_first'
+  | 'kill_next'
   | 'game_ended';
 
 /** Komu poslat upozornění: konkrétnímu hráči, všem hráčům hry, nebo organizátorovi. */
@@ -30,6 +32,8 @@ export interface Note {
   playerId?: string;
   allPlayers?: boolean;
   admins?: boolean;
+  /** Hráči, kterým se tato zpráva neposílá (např. vrah a oběť u oznámení vraždy). */
+  exclude?: string[];
 }
 
 export interface PushJob {
@@ -55,6 +59,8 @@ const MESSAGES: Record<NoteKind, { title: string; body: string; urgency: 'high' 
   kill_confirmed: { title: 'Vražda potvrzena', body: 'Máš novou oběť. Podívej se do aplikace.', urgency: 'high', priority: 1 },
   kill_rejected: { title: 'Oběť vraždu odmítla', body: 'Vyřeš situaci se svou obětí. Zůstává tvým cílem.', urgency: 'high', priority: 1 },
   appeal_rejected: { title: 'Vražda byla odvolána', body: 'Předchozí oběť vraždu odvolala a je opět tvým cílem.', urgency: 'high', priority: 1 },
+  kill_first: { title: 'Padla první oběť', body: 'Rodina přišla o prvního člena. Dávej si pozor.', urgency: 'normal', priority: 0 },
+  kill_next: { title: 'Padla další oběť', body: 'Kruh se zmenšuje. Dávej si pozor.', urgency: 'normal', priority: 0 },
   game_started: { title: 'Hra začala', body: 'Podívej se, kdo je tvoje oběť.', urgency: 'high', priority: 3 },
   game_ended: { title: 'Hra skončila', body: 'Podívej se na výsledky.', urgency: 'normal', priority: 4 },
 };
@@ -117,6 +123,7 @@ export async function dispatch(env: PushEnv, gameId: string, notes: Note[]): Pro
       // Jedna zpráva na zařízení: při více událostech najednou vyhraje ta důležitější.
       let best: NoteKind | null = null;
       for (const note of notes) {
+        if (sub.player_id && note.exclude?.includes(sub.player_id)) continue;
         const applies = (note.playerId !== undefined && note.playerId === sub.player_id)
           || (note.allPlayers && sub.role === 'player')
           || (note.admins && sub.role === 'admin');

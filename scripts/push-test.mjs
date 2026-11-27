@@ -31,7 +31,7 @@ const inbox = path => devices.get(path).inbox;
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 console.log('Odběry');
-const [, c] = await post({ action: 'create', name: 'Push', rule: 'x', adminName: 'Org', adminPlays: false, killMode: 'confirm' });
+const [, c] = await post({ action: 'create', name: 'Push', rule: 'x', adminName: 'Org', adminPlays: false, killMode: 'confirm', killAlerts: 'none' });
 const admin = c.credentials;
 const [, s0] = await post({ action: 'state', ...admin });
 ok(s0.push?.publicKey?.length > 80, 'state obsahuje veřejný VAPID klíč');
@@ -92,4 +92,51 @@ const [s1, tr] = await post({ action: 'transferRedeem', code: ts.code.toLowerCas
 ok(s1 === 200 && tr.credentials.playerToken === players[1].cred.playerToken, 'kód přenosu vrátil přístup');
 const [s2] = await post({ action: 'transferRedeem', code: ts.code });
 ok(s2 === 404, 'kód přenosu nejde použít podruhé');
+
+console.log('Oznamování vražd (nastavení hry) a průběžné statistiky');
+for (const alerts of ['first', 'every']) {
+  const [, c2] = await post({ action: 'create', name: 'Oznámení ' + alerts, rule: 'x', adminName: 'Org', adminPlays: false, killMode: 'instant', killAlerts: alerts });
+  const adm = c2.credentials;
+  const [, st] = await post({ action: 'state', ...adm });
+  ok(st.game.killAlerts === alerts, `hra uložila killAlerts=${alerts}`);
+  const admDev = device('adm-' + alerts);
+  await post({ action: 'subscribe', ...adm, subscription: admDev.sub });
+  const ps = [];
+  for (let i = 0; i < 5; i++) {
+    const [, j] = await post({ action: 'join', code: st.game.code, name: 'Q' + i });
+    const dev = device(alerts + i);
+    await post({ action: 'subscribe', ...j.credentials, subscription: dev.sub });
+    ps.push({ cred: j.credentials, path: dev.path, name: 'Q' + i });
+  }
+  await post({ action: 'start', ...adm });
+  await wait(2500);
+  const killer = ps[0];
+  const [, s1] = await post({ action: 'state', ...killer.cred });
+  const v1 = ps.find(p => p.name === s1.player.target.name);
+  await post({ action: 'report', ...killer.cred });
+  await wait(2500);
+  const bystanders = ps.filter(p => p !== killer && p !== v1);
+  ok(bystanders.every(p => inbox(p.path).at(-1)?.title === 'Padla první oběť'), `[${alerts}] ostatní dostali „Padla první oběť“`);
+  ok(inbox(admDev.path).at(-1)?.title === 'Padla první oběť', `[${alerts}] organizátor dostal oznámení`);
+  ok(inbox(killer.path).at(-1)?.title === 'Hra začala' && inbox(v1.path).at(-1)?.title === 'Byl/a jsi zabit/a.', `[${alerts}] vrah oznámení nedostal, oběť dostala svou zprávu`);
+  const before = bystanders.map(p => inbox(p.path).length);
+  await post({ action: 'report', ...killer.cred });
+  await wait(2500);
+  const v2 = bystanders.find(p => inbox(p.path).at(-1)?.title?.startsWith('Byl/a'));
+  const others2 = bystanders.filter(p => p !== v2);
+  const got = others2.filter((p) => inbox(p.path).length > before[bystanders.indexOf(p)]);
+  if (alerts === 'first') ok(got.length === 0, '[first] druhá vražda se neoznamuje');
+  else ok(got.length === others2.length && others2.every(p => inbox(p.path).at(-1).title === 'Padla další oběť'), '[every] druhá vražda: „Padla další oběť“');
+  const [, live] = await post({ action: 'state', ...adm });
+  ok(live.stats?.live === true && live.stats.kills.length === 2 && live.stats.circle?.length === 5, `[${alerts}] nehrající organizátor vidí průběžné statistiky a kruh`);
+  const [, ps1] = await post({ action: 'state', ...ps[3].cred });
+  ok(!ps1.stats, `[${alerts}] hráč během hry statistiky nevidí`);
+  if (alerts === 'every') {
+    const [sd] = await post({ action: 'delete', ...ps[1].cred });
+    ok(sd === 403, 'hráč nemůže hru smazat');
+    const [sd2] = await post({ action: 'delete', ...adm });
+    const [sg] = await post({ action: 'state', ...adm });
+    ok(sd2 === 200 && sg === 404, 'organizátor hru smazal (hra už neexistuje)');
+  }
+}
 server.close();

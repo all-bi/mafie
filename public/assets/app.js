@@ -27,9 +27,35 @@
 
   function saveCredentials(value) {
     credentials = value;
-    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
+    if (value) { localStorage.setItem(storageKey, JSON.stringify(value)); rememberGame(value); }
     else localStorage.removeItem(storageKey);
   }
+
+  // Moje hry: zařízení si pamatuje přístupy ke všem hrám, které založilo nebo do nich vstoupilo.
+  const gamesKey = 'kruh-games-v1';
+  let pendingDelete = null;
+  function loadGames() {
+    try { const list = JSON.parse(localStorage.getItem(gamesKey)); return Array.isArray(list) ? list.filter(item => item?.credentials?.gameId) : []; }
+    catch { return []; }
+  }
+  function storeGames(list) { try { localStorage.setItem(gamesKey, JSON.stringify(list.slice(0, 30))); } catch { /* nic */ } }
+  function rememberGame(creds, info = {}) {
+    const list = loadGames();
+    const previous = list.find(item => item.credentials.gameId === creds.gameId) || {};
+    const entry = { ...previous, ...info, credentials: { ...previous.credentials, ...creds }, savedAt: previous.savedAt || Date.now() };
+    storeGames([entry, ...list.filter(item => item.credentials.gameId !== creds.gameId)]);
+  }
+  function updateGameInfo(state) {
+    const list = loadGames();
+    const entry = list.find(item => item.credentials.gameId === state.game.id);
+    if (!entry) return;
+    const info = { name: state.game.name, code: state.game.code, status: state.game.status };
+    if (entry.name === info.name && entry.code === info.code && entry.status === info.status) return;
+    Object.assign(entry, info);
+    storeGames(list);
+  }
+  function forgetGame(gameId) { storeGames(loadGames().filter(item => item.credentials.gameId !== gameId)); }
+  if (credentials && !loadGames().some(item => item.credentials.gameId === credentials.gameId)) rememberGame(credentials);
 
   async function api(payload) {
     const response = await fetch('api.php', {
@@ -87,11 +113,13 @@
         <p class="lede">Diskrétní průvodce vaší hrou Mafie. Hráči tvoří uzavřený kruh: každý zná jen svou oběť, nikdo svého vraha. Co se stane v rodině, zůstane v rodině.</p>
       </section>
       <section class="entry-card">
-        <div class="tabs" role="tablist">
+        <div class="tabs ${loadGames().length ? 'tabs-3' : ''}" role="tablist">
           <button type="button" data-action="mode-join" class="${mode === 'join' ? 'active' : ''}">Připojit se</button>
           <button type="button" data-action="mode-create" class="${mode === 'create' ? 'active' : ''}">Založit hru</button>
+          ${loadGames().length ? `<button type="button" data-action="mode-games" class="${mode === 'games' ? 'active' : ''}">Moje hry</button>` : ''}
         </div>
-        ${mode === 'transfer' ? `<form id="transfer-form">
+        ${mode === 'games' ? gamesList() : ''}
+        ${mode === 'games' ? '' : mode === 'transfer' ? `<form id="transfer-form">
           <p class="hint">Na zařízení, kde už ve hře jsi, zvol „Přenést na jiné zařízení“ a opiš sem kód.</p>
           <label>Kód přenosu<input name="code" required maxlength="9" placeholder="TŘEBA AB3D-7KXQ" autocapitalize="characters" autocomplete="off"></label>
           <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Přenáším…' : 'Pokračovat ve hře'}</button>
@@ -117,6 +145,7 @@
             <label class="radio"><input type="radio" name="killMode" value="appeal" checked><span><b>Možnost odvolání</b><small>Nová oběť se ukáže ihned. Vraždu lze odvolat do další vraždy stejného vraha.</small></span></label>
             <label class="radio"><input type="radio" name="killMode" value="instant"><span><b>Žádná práva oběti</b><small>Vražda platí okamžitě a nelze ji odvolat.</small></span></label>
           </fieldset>
+          <label class="inline-select">Oznámit vraždu všem hráčům<select name="killAlerts"><option value="first" selected>Jen první</option><option value="every">Každou</option><option value="none">Neoznamovat</option></select></label>
           <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Zakládám…' : 'Založit hru'}</button>
         </form>`}
         ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ''}
@@ -138,15 +167,123 @@
     return [days ? `${days} d` : '', hours ? `${hours} h` : '', `${mins} min`].filter(Boolean).join(' ');
   }
 
+  function circleCard(stats) {
+    if (!stats.circle || stats.circle.length < 3) return '';
+    return `<section class="card circle-card"><p class="card-label">Kruh hry</p>${circleSvg(stats)}<p class="cc-legend">Barevné trasy ukazují, jak se každý vrah posouval kruhem přes své oběti. U úseku je doba, za kterou oběť zabil.</p></section>`;
+  }
+
+  // Průběžné statistiky pro organizátora, který sám nehraje.
+  function liveStats(stats) {
+    const sorted = [...stats.players].sort((a, b) => b.killsCount - a.killsCount);
+    const alive = stats.players.filter(p => p.status === 'alive').length;
+    return `<section class="results">
+      <div class="stat-grid"><article><span>Naživu</span><strong>${alive} z ${stats.players.length}</strong><small>${stats.kills.length} potvrzených vražd</small></article>
+      <article><span>Nejvíc vražd</span><strong>${esc(stats.leaders.map(item => item.name).join(', ') || '—')}</strong><small>${stats.leaders[0]?.kills || 0} celkem</small></article></div>
+      ${circleCard(stats)}
+      <section class="card"><p class="card-label">Pořadí vrahů</p><ol class="leaderboard">${sorted.map(item => `<li><span>${esc(item.name)}${item.status === 'dead' ? ' <small>†</small>' : ''}</span><b>${item.killsCount}×</b></li>`).join('')}</ol></section>
+      <section class="card"><p class="card-label">Časová osa</p><div class="timeline">${stats.timeline.length ? stats.timeline.map(item => `<div><i></i><span><b>${esc(item.killer)}</b> zabil/a ${esc(item.victim)}<small>${new Date(item.at).toLocaleString('cs-CZ')} · za ${formatDuration(item.afterMs)}</small></span></div>`).join('') : '<p>Zatím žádná potvrzená vražda.</p>'}</div></section>
+    </section>`;
+  }
+
+  // Vykreslí kruh hry: hráči v původním pořadí kruhu, trasy vrahů přes jejich oběti
+  // a doby, za které každou oběť zabili. Vrací SVG jako text (bez inline stylů kvůli CSP).
+  function circleSvg(stats) {
+    const players = stats.circle;           // [{id,name,status}] v pořadí kruhu (po směru hodin)
+    const kills = stats.kills;              // [{killerId,victimId,afterMs}] chronologicky
+    const n = players.length;
+    if (n < 3) return '';
+    const W = 400, C = 200, R = 128, ROUTE_R = 108, LABEL_R = 152;
+    const pos = new Map(players.map((p, i) => [p.id, i]));
+    const angle = i => -Math.PI / 2 + (2 * Math.PI * i) / n;
+    const pt = (i, r) => [C + r * Math.cos(angle(i)), C + r * Math.sin(angle(i))];
+    const f = v => v.toFixed(1);
+    const palette = ['#9e2d27', '#b4823d', '#47715c', '#3d5a80', '#7a4f8a', '#a8603a', '#2f7f7a', '#8a6d1f'];
+    const dur = ms => { const m = Math.max(1, Math.round(ms / 60000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60; return d ? `${d} d ${h} h` : h ? `${h} h ${String(mm).padStart(2, '0')}` : `${mm} min`; };
+    const fs = n <= 12 ? 12.5 : n <= 24 ? 10 : 8;
+    const showDur = n <= 20;
+
+    // Trasy: každý vrah má jednu barvu, trasa vede od něj přes jeho oběti po směru hodin.
+    const routes = new Map();
+    for (const k of kills) {
+      if (!routes.has(k.killerId)) routes.set(k.killerId, []);
+      routes.get(k.killerId).push(k);
+    }
+    const order = [...routes.keys()].sort((a, b) => routes.get(b).length - routes.get(a).length);
+    const color = new Map(order.map((id, i) => [id, palette[i % palette.length]]));
+
+    // Úseky tras (od vraha nebo jeho předchozí oběti k další oběti, po směru hodin).
+    const segments = [];
+    for (const [killerId, list] of routes) {
+      let from = pos.get(killerId);
+      for (const k of list) {
+        const to = pos.get(k.victimId);
+        segments.push({ killerId, from, steps: ((to - from) % n + n) % n || n, afterMs: k.afterMs });
+        from = to;
+      }
+    }
+    // Překrývající se úseky dostanou vnitřnější dráhu, aby se trasy ani časy nepřekrývaly.
+    const lanes = [];
+    const overlaps = (a, b) => [-n, 0, n].some(shift => a.from < b.from + shift + b.steps && b.from + shift < a.from + a.steps);
+    for (const seg of segments) {
+      let lane = 0;
+      while (lanes[lane]?.some(other => overlaps(seg, other))) lane++;
+      (lanes[lane] ||= []).push(seg);
+      seg.lane = lane;
+    }
+    const laneGap = Math.min(22, 70 / Math.max(1, lanes.length));
+
+    let defs = '', paths = '', labels = '';
+    for (const id of order) {
+      defs += `<marker id="m${pos.get(id)}" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${color.get(id)}"/></marker>`;
+    }
+    for (const seg of segments) {
+      const col = color.get(seg.killerId);
+      const r = ROUTE_R - seg.lane * laneGap;
+      const [x1, y1] = pt(seg.from + 0.18, r), [x2, y2] = pt(seg.from + seg.steps - 0.14, r);
+      const large = seg.steps / n > 0.5 ? 1 : 0;
+      paths += `<path d="M${f(x1)} ${f(y1)}A${f(r)} ${f(r)} 0 ${large} 1 ${f(x2)} ${f(y2)}" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" marker-end="url(#m${pos.get(seg.killerId)})"/>`;
+      if (showDur) {
+        const [tx, ty] = pt(seg.from + seg.steps / 2, r - 13);
+        labels += `<text x="${f(tx)}" y="${f(ty)}" class="cc-dur" fill="${col}" text-anchor="middle" dominant-baseline="middle">${esc(dur(seg.afterMs))}</text>`;
+      }
+    }
+
+    let dots = '';
+    players.forEach((p, i) => {
+      const [x, y] = pt(i, R);
+      const [lx, ly] = pt(i, LABEL_R);
+      const a = angle(i), cos = Math.cos(a);
+      const anchor = Math.abs(cos) < 0.25 ? 'middle' : cos > 0 ? 'start' : 'end';
+      const winner = stats.winner && p.status === 'alive';
+      const killer = color.get(p.id);
+      if (p.status === 'dead') {
+        dots += `<circle cx="${f(x)}" cy="${f(y)}" r="7" fill="#fffdf8" stroke="#b9b2a5" stroke-width="1.5"/><path d="M${f(x - 3.2)} ${f(y - 3.2)}l6.4 6.4M${f(x + 3.2)} ${f(y - 3.2)}l-6.4 6.4" stroke="#9d968a" stroke-width="1.5"/>`;
+      } else {
+        dots += `<circle cx="${f(x)}" cy="${f(y)}" r="${winner ? 9 : 7}" fill="${winner ? '#b4823d' : '#47715c'}" stroke="#fffdf8" stroke-width="2"/>`;
+      }
+      if (killer) dots += `<circle cx="${f(x)}" cy="${f(y)}" r="${winner ? 13 : 11}" fill="none" stroke="${killer}" stroke-width="1.5"/>`;
+      dots += `<text x="${f(lx)}" y="${f(ly)}" font-size="${fs}" class="cc-name${p.status === 'dead' ? ' cc-dead' : ''}${winner ? ' cc-win' : ''}" text-anchor="${anchor}" dominant-baseline="middle">${esc(p.name)}</text>`;
+    });
+
+    const total = kills.length;
+    const center = `<text x="${C}" y="${C - 8}" class="cc-big" text-anchor="middle">${total}</text><text x="${C}" y="${C + 16}" class="cc-small" text-anchor="middle">${total === 1 ? 'vražda' : total < 5 ? 'vraždy' : 'vražd'}</text>`;
+    const legend = order.map(id => `<li><i class="cc-swatch cc-c${palette.indexOf(color.get(id))}"></i>${esc(players[pos.get(id)].name)} <b>${routes.get(id).length}×</b></li>`).join('');
+    return `<svg class="circle-chart" viewBox="0 0 ${W} ${W}" role="img" aria-label="Kruh hry: trasy vrahů přes jejich oběti">
+      <defs>${defs}</defs>
+      <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="#dcd6ca" stroke-width="1.5" stroke-dasharray="2 5"/>
+      ${paths}${labels}${dots}${center}</svg><ul class="cc-legend-list">${legend}</ul>`;
+  }
+
   function results(stats, early) {
     const sorted = [...stats.players].sort((a, b) => b.killsCount - a.killsCount);
     return `<section class="results">
       <div class="result-hero"><p class="eyebrow">${early ? 'Předčasně ukončeno' : 'Poslední přeživší'}</p><h2>${esc(stats.winner || 'Bez vítěze')}</h2><p>${early ? 'Hra byla ukončena organizátorem.' : 'Jediný, kdo zůstal naživu.'}</p></div>
       <div class="stat-grid"><article><span>První oběť</span><strong>${esc(stats.firstVictim?.name || '—')}</strong><small>${stats.firstVictim ? `${formatDuration(stats.firstVictim.afterMs)} od startu` : 'Bez vražd'}</small></article>
       <article><span>Nejvíc vražd</span><strong>${esc(stats.leaders.map(item => item.name).join(', ') || '—')}</strong><small>${stats.leaders[0]?.kills || 0} celkem</small></article></div>
+      ${circleCard(stats)}
       <section class="card"><p class="card-label">Rekordy v čase</p><div class="window-list">${stats.windows.map(item => `<div><span>${esc(item.label)}</span><b>${esc(item.names.join(', ') || '—')}</b><strong>${item.count}</strong></div>`).join('')}</div></section>
       <section class="card"><p class="card-label">Pořadí vrahů</p><ol class="leaderboard">${sorted.map(item => `<li><span>${esc(item.name)}</span><b>${item.killsCount}×</b></li>`).join('')}</ol></section>
-      <section class="card"><p class="card-label">Časová osa</p><div class="timeline">${stats.timeline.length ? stats.timeline.map(item => `<div><i></i><span><b>${esc(item.killer)}</b> zabil/a ${esc(item.victim)}<small>${new Date(item.at).toLocaleString('cs-CZ')}</small></span></div>`).join('') : '<p>Ve hře neproběhla žádná potvrzená vražda.</p>'}</div></section>
+      <section class="card"><p class="card-label">Časová osa</p><div class="timeline">${stats.timeline.length ? stats.timeline.map(item => `<div><i></i><span><b>${esc(item.killer)}</b> zabil/a ${esc(item.victim)}<small>${new Date(item.at).toLocaleString('cs-CZ')}${item.afterMs != null ? ` · za ${formatDuration(item.afterMs)}` : ''}</small></span></div>`).join('') : '<p>Ve hře neproběhla žádná potvrzená vražda.</p>'}</div></section>
     </section>`;
   }
 
@@ -183,7 +320,11 @@
       else if (!gameState.incoming) content += '<section class="card dead"><div class="dead-mark">×</div><p class="eyebrow">Tvoje hra skončila</p><h2>Byl/a jsi zabit/a.</h2><p>Výsledky se odhalí až po konci celé hry.</p></section>';
       if (gameState.roster) content += roster(gameState.roster);
     }
-    if (game.status === 'active' && !player) content += `<section class="card"><p class="card-label">Pohled organizátora</p><h2>Hra právě probíhá.</h2><p>Průběžné statistiky jsou skryté. Hru můžeš pouze předčasně ukončit.</p>${gameState.roster ? roster(gameState.roster) : ''}</section>`;
+    if (game.status === 'active' && !player) {
+      content += gameState.stats
+        ? `<section class="card organizer-note"><p class="card-label">Pohled organizátora</p><p>Nehraješ, proto vidíš průběžné statistiky. Neukazuj je hráčům.</p></section>${liveStats(gameState.stats)}`
+        : `<section class="card"><p class="card-label">Pohled organizátora</p><h2>Hra právě probíhá.</h2><p>Hru můžeš předčasně ukončit.</p>${gameState.roster ? roster(gameState.roster) : ''}</section>`;
+    }
     if (game.status === 'finished' && gameState.stats) content += results(gameState.stats, game.endedReason === 'admin');
     content += pushCard(game);
 
@@ -195,12 +336,14 @@
       ${game.status !== 'finished' ? `<button class="logout" data-action="refresh" ${busy ? 'disabled' : ''}>Obnovit</button>` : ''}
       ${pushStatus === 'on' && gameState.push && game.status !== 'finished' ? '<button class="logout" data-action="push-disable">Vypnout upozornění</button>' : ''}
       ${game.status !== 'finished' ? '<button class="logout" data-action="transfer-create">Přenést na jiné zařízení</button>' : ''}
+      <button class="logout" data-action="my-games">Moje hry</button>
       <button class="logout" data-action="logout">Odhlásit</button>
       </nav>
       ${killModal(game, player)}${endModal()}${transferModal()}
     </main>`;
     root.dataset.invite = invite.toString();
     if (!pushSynced && gameState.push) queueMicrotask(syncPush);
+    updateGameInfo(gameState);
   }
 
   function render() {
@@ -229,7 +372,7 @@
       }
       const payload = event.target.id === 'join-form'
         ? { action: 'join', code: form.get('code'), name: form.get('name') }
-        : { action: 'create', name: form.get('name'), rule: form.get('rule'), adminName: form.get('adminName'), adminPlays: form.get('adminPlays') === 'on', killMode: form.get('killMode'), showRoster: form.get('showRoster') === 'on' };
+        : { action: 'create', name: form.get('name'), rule: form.get('rule'), adminName: form.get('adminName'), adminPlays: form.get('adminPlays') === 'on', killMode: form.get('killMode'), killAlerts: form.get('killAlerts'), showRoster: form.get('showRoster') === 'on' };
       const response = await api(payload);
       saveCredentials(response.credentials);
       gameState = await api({ action: 'state', ...credentials });
@@ -252,7 +395,13 @@
     const button = event.target.closest('[data-action]');
     if (!button || button.disabled) return;
     const action = button.dataset.action;
-    if (action === 'mode-join' || action === 'mode-create' || action === 'mode-transfer') { mode = action.slice(5); error = ''; render(); }
+    if (action === 'mode-join' || action === 'mode-create' || action === 'mode-transfer' || action === 'mode-games') {
+      mode = action.slice(5); error = ''; pendingDelete = null; render();
+      if (mode === 'games') refreshGamesList();
+    }
+    if (action === 'my-games') { stopActiveGame(); mode = 'games'; render(); refreshGamesList(); }
+    if (action === 'open-game') openGame(button.dataset.id);
+    if (action === 'delete-game') await deleteGame(button.dataset.id);
     if (action === 'reveal') toggleReveal();
     if (action === 'motion-enable') await enableMotion();
     if (action === 'push-enable') await enablePush();
@@ -273,8 +422,69 @@
     if (action === 'end-cancel') { endStep = 0; endText = ''; render(); }
     if (action === 'end-confirm') { endStep = 0; endText = ''; await act('end'); }
     if (action === 'refresh') { lastRefresh = Date.now(); await refresh(); schedulePoll(); }
-    if (action === 'logout') { forgetPushOnServer(); transfer = null; saveCredentials(null); gameState = null; error = ''; render(); schedulePoll(); }
+    if (action === 'logout') { forgetPushOnServer(); transfer = null; if (credentials) forgetGame(credentials.gameId); saveCredentials(null); gameState = null; error = ''; render(); schedulePoll(); }
   });
+
+  // ------------------------------------------------------------ moje hry
+
+  const STATUS_LABEL = { registration: 'registrace', active: 'hra běží', finished: 'ukončeno' };
+
+  function gamesList() {
+    const list = loadGames();
+    if (!list.length) return '<p class="hint">Na tomto zařízení zatím nemáš žádnou hru.</p>';
+    return `<ul class="games-list">${list.map(item => {
+      const id = esc(item.credentials.gameId);
+      const role = item.credentials.adminToken ? (item.credentials.playerToken ? 'organizátor a hráč' : 'organizátor') : 'hráč';
+      const del = item.credentials.adminToken
+        ? `<button type="button" class="link danger-link" data-action="delete-game" data-id="${id}">${pendingDelete === item.credentials.gameId ? 'Opravdu smazat?' : 'Smazat'}</button>`
+        : '';
+      return `<li><div><b>${esc(item.name || 'Hra')}</b><small>${esc([item.code, role, STATUS_LABEL[item.status] || ''].filter(Boolean).join(' · '))}</small></div><span class="games-actions">${del}<button type="button" class="secondary" data-action="open-game" data-id="${id}">Otevřít</button></span></li>`;
+    }).join('')}</ul><p class="hint">Hry se pamatují jen na tomto zařízení. Smazat hru může organizátor.</p>`;
+  }
+
+  /** Načte aktuální stav uložených her; hry, které už neexistují, z výpisu odstraní. */
+  async function refreshGamesList() {
+    for (const item of loadGames()) {
+      try {
+        const response = await fetch('api.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'state', ...item.credentials }) });
+        if (response.status === 404 || response.status === 401) { forgetGame(item.credentials.gameId); continue; }
+        const body = await response.json();
+        if (body.game) rememberGame(item.credentials, { name: body.game.name, code: body.game.code, status: body.game.status });
+      } catch { /* offline: necháme starý údaj */ }
+    }
+    if (!credentials && mode === 'games') render();
+  }
+
+  function stopActiveGame() {
+    if (pollTimer) clearTimeout(pollTimer); pollTimer = null; transfer = null; revealUntil = 0;
+    credentials = null; localStorage.removeItem(storageKey);
+    gameState = null; error = ''; killStep = 0; endStep = 0; pushSynced = false;
+  }
+
+  function openGame(gameId) {
+    const item = loadGames().find(entry => entry.credentials.gameId === gameId);
+    if (!item) return;
+    saveCredentials(item.credentials);
+    gameState = null; mode = 'join'; pendingDelete = null; pushSynced = false;
+    lastRefresh = Date.now();
+    render();
+    refresh().then(schedulePoll);
+  }
+
+  async function deleteGame(gameId) {
+    if (pendingDelete !== gameId) { pendingDelete = gameId; render(); return; }
+    const item = loadGames().find(entry => entry.credentials.gameId === gameId);
+    pendingDelete = null;
+    if (!item) return;
+    try {
+      await api({ action: 'delete', ...item.credentials });
+      forgetGame(gameId);
+      error = '';
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : 'Hru se nepodařilo smazat.';
+    }
+    render();
+  }
 
   // ------------------------------------------------- skryté jméno oběti
   // Jméno oběti je jako PIN v bankovní aplikaci: ve výchozím stavu skryté,
