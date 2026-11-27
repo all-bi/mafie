@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+dump.sql
+*.d1.sql
+data/
+legacy/config.php
+config.php

@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kruh-mafie",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Statické soubory (CSS, JS, obrázky). Požadavky na existující soubor
+  // obslouží Cloudflare přímo a nezapočítávají se do limitu Workeru.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kruh-mafie",
+      // Doplň ID z výstupu `npx wrangler d1 create kruh-mafie` (viz README).
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Vlastní doména. Zóna albiovi.cz musí být na Cloudflare (je).
+  // Pokud chceš jinou subdoménu, změň "pattern".
+  "routes": [
+    { "pattern": "app.albiovi.cz", "custom_domain": true }
+  ],
+
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true }
+}

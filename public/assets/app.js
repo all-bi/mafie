@@ -66,7 +66,7 @@
       gameState = await api({ action: 'state', ...credentials });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Akci se nepodařilo dokončit.';
-    } finally { busy = false; render(); }
+    } finally { busy = false; render(); schedulePoll(); }
   }
 
   function brandMark() { return '<div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>'; }
@@ -233,12 +233,32 @@
     if (action === 'logout') { stopPolling(); saveCredentials(null); gameState = null; error = ''; render(); }
   });
 
-  function startPolling() {
-    stopPolling();
-    timer = setInterval(() => refresh(true), 5000);
+  // Šetrné obnovování stavu: jen když je stránka vidět, delší interval
+  // pro mrtvé hráče a žádné dotazy po skončení hry.
+  function pollDelay() {
+    if (!gameState) return 10000;
+    if (gameState.game?.status === 'finished') return 0;
+    if (gameState.player?.status === 'dead' && !gameState.incoming) return 30000;
+    return 10000;
   }
-  function stopPolling() { if (timer) clearInterval(timer); timer = null; }
+  function schedulePoll() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    if (!credentials || document.hidden) return;
+    const delay = pollDelay();
+    if (!delay) return;
+    timer = setTimeout(async () => { timer = null; await refresh(true); schedulePoll(); }, delay);
+  }
+  function startPolling() { schedulePoll(); }
+  function stopPolling() { if (timer) clearTimeout(timer); timer = null; }
+
+  document.addEventListener('visibilitychange', async () => {
+    if (!credentials) return;
+    if (document.hidden) { stopPolling(); return; }
+    if (gameState?.game?.status !== 'finished') await refresh(true);
+    schedulePoll();
+  });
 
   render();
-  if (credentials) { refresh(); startPolling(); }
+  if (credentials) { refresh().then(startPolling); }
 })();
