@@ -207,3 +207,15 @@ form .link{margin-top:0;padding:6px}
 .footer-links .logout{display:inline-block;margin:0;padding:8px 2px}
 .results .card{margin-bottom:10px}
 }
+/* Skryté jméno oběti (odkrytí na 3 s). */
+.secret{position:relative;display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:10px;margin-bottom:18px}
+.secret h2{margin:4px 0 0!important;min-height:1.1em;word-break:break-word}
+.masked{letter-spacing:.12em;color:#b9b2a5}
+.reveal{width:46px;height:46px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--ink);display:grid;place-items:center}
+.secret.open .reveal{color:var(--red);border-color:#d9aea8}
+.reveal-hint{grid-column:1/-1;margin-top:6px;color:var(--muted);font-size:12px;line-height:1.35}
+.reveal-bar{grid-column:1/-1;display:block;height:3px;margin-top:10px;border-radius:2px;background:var(--red);transform-origin:left;animation:reveal-countdown 3s linear forwards}
+@keyframes reveal-countdown{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+.motion-link{display:block;margin:-10px 0 10px;padding:4px 0;font-size:12px}
+@media (prefers-reduced-motion:reduce){.reveal-bar{animation:reveal-countdown 3s linear forwards!important}}
+@media (max-width:600px){.secret{margin-bottom:12px}.reveal{width:42px;height:42px}}

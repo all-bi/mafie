@@ -172,9 +172,9 @@
     }
     if (game.status === 'active' && player) {
       if (gameState.incoming) content += `<section class="card death-question"><div class="pulse-ring"></div><p class="eyebrow">Vyžaduje tvoji odpověď</p><h2>Byl/a jsi zabit/a?</h2><p>Potvrď, zda vražda proběhla podle pravidel. Jméno vraha zůstává skryté.</p><div class="two-actions"><button class="primary" data-action="respond-yes">Ano</button><button class="secondary danger-text" data-action="respond-no">Ne</button></div></section>`;
-      if (gameState.rejected && player.status === 'alive') content += `<section class="alert warning"><strong>Vyřeš vraždu s hráčem ${esc(gameState.rejected.victimName)}.</strong><span>Po domluvě ji můžeš zadat znovu. Tato osoba je opět tvou obětí.</span></section>`;
+      if (gameState.rejected && player.status === 'alive') content += `<section class="alert warning"><strong>Oběť vraždu odmítla. Vyřeš to s ní.</strong><span>Po domluvě ji můžeš zadat znovu. Tato osoba je opět tvou obětí.</span></section>`;
       if (gameState.outgoing) content += `<section class="alert waiting-box"><strong>${gameState.outgoing.status === 'pending' ? 'Čeká se na potvrzení oběti.' : 'Předchozí oběť může vraždu odvolat.'}</strong><span>${gameState.outgoing.status === 'provisional' ? 'Jakmile provedeš další vraždu, předchozí už nebude možné odvolat.' : 'Novou oběť získáš po potvrzení.'}</span></section>`;
-      if (player.status === 'alive') content += `<section class="target-card"><p class="card-label">Tvoje současná oběť</p><h2>${esc(player.target?.name || 'Čeká se na uzavření vraždy')}</h2><div class="rule-strip"><span>Pravidlo</span><p>${esc(game.rule)}</p></div><button class="kill-button" data-action="kill-open" ${(busy || gameState.incoming || gameState.outgoing?.status === 'pending' || !player.target) ? 'disabled' : ''}>Zabil/a jsem svou oběť</button></section>`;
+      if (player.status === 'alive') content += `<section class="target-card"><p class="card-label">Tvoje současná oběť</p>${player.target ? secretName(player.target.name) : '<h2>Čeká se na uzavření vraždy</h2>'}<div class="rule-strip"><span>Pravidlo</span><p>${esc(game.rule)}</p></div><button class="kill-button" data-action="kill-open" ${(busy || gameState.incoming || gameState.outgoing?.status === 'pending' || !player.target) ? 'disabled' : ''}>Zabil/a jsem svou oběť</button></section>`;
       else if (!gameState.incoming) content += '<section class="card dead"><div class="dead-mark">×</div><p class="eyebrow">Tvoje hra skončila</p><h2>Byl/a jsi zabit/a.</h2><p>Výsledky se odhalí až po konci celé hry.</p></section>';
       if (gameState.roster) content += roster(gameState.roster);
     }
@@ -248,6 +248,8 @@
     if (!button || button.disabled) return;
     const action = button.dataset.action;
     if (action === 'mode-join' || action === 'mode-create' || action === 'mode-transfer') { mode = action.slice(5); error = ''; render(); }
+    if (action === 'reveal') toggleReveal();
+    if (action === 'motion-enable') await enableMotion();
     if (action === 'push-enable') await enablePush();
     if (action === 'push-disable') await disablePush();
     if (action === 'transfer-create') await createTransfer();
@@ -268,6 +270,96 @@
     if (action === 'refresh') { lastRefresh = Date.now(); await refresh(); schedulePoll(); }
     if (action === 'logout') { forgetPushOnServer(); transfer = null; saveCredentials(null); gameState = null; error = ''; render(); schedulePoll(); }
   });
+
+  // ------------------------------------------------- skryté jméno oběti
+  // Jméno oběti je jako PIN v bankovní aplikaci: ve výchozím stavu skryté,
+  // ukáže se na 3 s po klepnutí na očičko nebo po otočení telefonu displejem
+  // dolů a zpět nahoru. Nikdo tak omylem nezahlédne cizí oběť na displeji.
+  const REVEAL_MS = 3000;
+  const motionKey = 'kruh-flip-reveal';
+  let revealUntil = 0;
+  let revealTimer = null;
+  let faceDownAt = 0;
+  let motionOn = false;
+  const motionNeedsPermission = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  const motionSupported = typeof DeviceOrientationEvent !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
+  function revealed() { return Date.now() < revealUntil; }
+
+  function eyeIcon(open) {
+    return open
+      ? '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+  }
+
+  function secretName(name) {
+    const open = revealed();
+    const hint = motionOn ? 'Klepni na očičko nebo otoč telefon displejem dolů a zpět.' : 'Klepni na očičko.';
+    return `<div class="secret ${open ? 'open' : ''}">
+      <h2>${open ? esc(name) : '<span class="masked" aria-label="Skryto">••••••</span>'}</h2>
+      <button type="button" class="reveal" data-action="reveal" aria-label="${open ? 'Skrýt jméno oběti' : 'Zobrazit jméno oběti na 3 sekundy'}">${eyeIcon(!open)}</button>
+      ${open ? '<i class="reveal-bar"></i>' : `<small class="reveal-hint">${hint}</small>`}
+    </div>${!motionOn && motionSupported && motionNeedsPermission ? '<button type="button" class="link motion-link" data-action="motion-enable">Odkrývat i otočením telefonu</button>' : ''}`;
+  }
+
+  function reveal() {
+    revealUntil = Date.now() + REVEAL_MS;
+    if (revealTimer) clearTimeout(revealTimer);
+    revealTimer = setTimeout(hideSecret, REVEAL_MS);
+    if (navigator.vibrate) navigator.vibrate(15);
+    render();
+  }
+
+  function hideSecret() {
+    revealUntil = 0;
+    if (revealTimer) clearTimeout(revealTimer);
+    revealTimer = null;
+    if (credentials && gameState) render();
+  }
+
+  function toggleReveal() { if (revealed()) hideSecret(); else reveal(); }
+
+  // Displejem dolů = beta kolem ±180°. Návrat (|beta| < 100°) do 4 s odkryje jméno.
+  function onOrientation(event) {
+    if (event.beta == null || !gameState?.player?.target || gameState.player.status !== 'alive') return;
+    const beta = Math.abs(event.beta);
+    const gamma = Math.abs(event.gamma || 0);
+    if (beta > 140 && gamma < 40) { faceDownAt = Date.now(); return; }
+    if (faceDownAt && beta < 100) {
+      const fresh = Date.now() - faceDownAt < 4000;
+      faceDownAt = 0;
+      if (fresh && !document.hidden) reveal();
+    }
+  }
+
+  function startMotion() {
+    if (motionOn) return;
+    window.addEventListener('deviceorientation', onOrientation);
+    motionOn = true;
+  }
+
+  async function enableMotion() {
+    try {
+      if (motionNeedsPermission && (await DeviceOrientationEvent.requestPermission()) !== 'granted') {
+        error = 'Bez povolení pohybu jde jméno odkrýt jen očičkem.';
+        render();
+        return;
+      }
+      try { localStorage.setItem(motionKey, '1'); } catch { /* nic */ }
+      startMotion();
+      render();
+    } catch {
+      error = 'Odkrývání otočením se nepodařilo zapnout.';
+      render();
+    }
+  }
+
+  // Android a ostatní bez povolení: rovnou. iOS: až po klepnutí (vyžaduje gesto);
+  // když už jednou povoleno, iOS dovolí poslouchat i po načtení stránky.
+  if (motionSupported && !motionNeedsPermission) startMotion();
+  else if (motionSupported) { try { if (localStorage.getItem(motionKey) === '1') startMotion(); } catch { /* nic */ } }
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden && revealUntil) { revealUntil = 0; faceDownAt = 0; } });
 
   // ---------------------------------------------------- push upozornění
   // Stav: unsupported | ios-install | default | denied | on
