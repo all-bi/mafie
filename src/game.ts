@@ -27,6 +27,7 @@ import {
   tokenHash,
   uuidV4,
 } from './util';
+import { isAllowedEndpoint, isValidKeys, pushConfigured, type Note, type PushEnv } from './push';
 
 type GameStatus = 'registration' | 'active' | 'finished';
 type KillMode = 'confirm' | 'appeal' | 'instant';
@@ -91,7 +92,13 @@ function isUniqueViolation(error: unknown, columns: string): boolean {
 }
 
 export class GameService {
-  constructor(private readonly db: D1Database) {}
+  /** Upozornění k odeslání po úspěšně zapsané změně (vyzvedne je index.tsx). */
+  notifications: { gameId: string; notes: Note[] } | null = null;
+  private readonly db: D1Database;
+
+  constructor(private readonly env: PushEnv) {
+    this.db = env.DB;
+  }
 
   async handle(input: Input): Promise<Json> {
     switch (str(input.action)) {
@@ -102,6 +109,10 @@ export class GameService {
       case 'report': return this.mutate(input, tx => tx.report(input));
       case 'respond': return this.mutate(input, tx => tx.respond(input));
       case 'end': return this.mutate(input, tx => tx.end(input));
+      case 'subscribe': return this.subscribe(input);
+      case 'unsubscribe': return this.unsubscribe(input);
+      case 'transferCreate': return this.transferCreate(input);
+      case 'transferRedeem': return this.transferRedeem(input);
       default: throw new DomainError('Neznámá akce.', 404);
     }
   }
@@ -284,6 +295,7 @@ export class GameService {
     const canManage = isAdmin && !(game.status === 'active' && adminIsAlive);
 
     const response: Json = { game: publicGame(game), version: game.version };
+    if (pushConfigured(this.env)) response.push = { publicKey: this.env.VAPID_PUBLIC_KEY };
     if (player) {
       const target = rows('target')[0];
       response.player = { ...publicPlayer(player), target: target ? { id: target.id, name: target.name } : null };
@@ -336,6 +348,7 @@ export class GameService {
       await action(tx);
       try {
         await this.db.batch([...this.guard(game), ...tx.statements]);
+        if (tx.notes.length) this.notifications = { gameId: game.id, notes: tx.notes };
         return { ok: true };
       } catch (error) {
         if (isConflict(error) && attempt < MAX_ATTEMPTS) {
@@ -346,6 +359,84 @@ export class GameService {
         throw error;
       }
     }
+  }
+
+  // ---------------------------------------------------------- upozornění
+
+  /** Ověří přístup do hry (hráč nebo organizátor) stejně jako state. */
+  private async auth(input: Input): Promise<{ game: GameRow; player: PlayerRow | null; isAdmin: boolean }> {
+    const gameId = str(input.gameId);
+    if (!isUuid(gameId)) throw new DomainError('Hra nebyla nalezena.', 404);
+    const game = await this.db.prepare('SELECT * FROM games WHERE id = ?').bind(gameId).first<GameRow>();
+    if (!game) throw new DomainError('Hra nebyla nalezena.', 404);
+    const playerHash = await this.hashOrNull(str(input.playerToken));
+    const player = playerHash
+      ? await this.db.prepare('SELECT * FROM players WHERE game_id = ? AND token_hash = ?').bind(gameId, playerHash).first<PlayerRow>()
+      : null;
+    const isAdmin = await this.isAdmin(game, str(input.adminToken));
+    if (!player && !isAdmin) throw new DomainError('Přístup do hry vypršel.', 401);
+    return { game, player, isAdmin };
+  }
+
+  private async subscribe(input: Input): Promise<Json> {
+    if (!pushConfigured(this.env)) throw new DomainError('Upozornění nejsou na serveru nastavena.', 503);
+    const { game, player } = await this.auth(input);
+    const subscription = (input.subscription ?? {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
+    const endpoint = str(subscription.endpoint);
+    const p256dh = str(subscription.keys?.p256dh);
+    const auth = str(subscription.keys?.auth);
+    if (!isAllowedEndpoint(endpoint, this.env) || !isValidKeys(p256dh, auth)) {
+      throw new DomainError('Prohlížeč poslal neplatné údaje pro upozornění.');
+    }
+    // Jedno zařízení (endpoint) patří vždy jen k jedné hře a jednomu hráči.
+    await this.db.prepare(
+      `INSERT INTO push_subscriptions (endpoint, game_id, player_id, role, p256dh, auth, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (endpoint) DO UPDATE SET
+         game_id = excluded.game_id, player_id = excluded.player_id, role = excluded.role,
+         p256dh = excluded.p256dh, auth = excluded.auth, created_at = excluded.created_at`,
+    ).bind(endpoint, game.id, player?.id ?? null, player ? 'player' : 'admin', p256dh, auth, nowIso()).run();
+    return { ok: true };
+  }
+
+  private async unsubscribe(input: Input): Promise<Json> {
+    const { game } = await this.auth(input);
+    await this.db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND game_id = ?')
+      .bind(str(input.endpoint), game.id).run();
+    return { ok: true };
+  }
+
+  // ------------------------------------------------- přenos na jiné zařízení
+
+  private async transferCreate(input: Input): Promise<Json> {
+    const { game, player, isAdmin } = await this.auth(input);
+    const credentials: Json = { gameId: game.id };
+    if (player) credentials.playerToken = str(input.playerToken);
+    if (isAdmin) credentials.adminToken = str(input.adminToken);
+
+    const code = transferCode();
+    const payload = await sealCredentials(code, JSON.stringify(credentials));
+    const now = new Date();
+    await this.db.batch([
+      this.db.prepare('DELETE FROM transfer_codes WHERE expires_at < ?').bind(now.toISOString()),
+      this.db.prepare('INSERT INTO transfer_codes (code_hash, game_id, payload, expires_at) VALUES (?, ?, ?, ?)')
+        .bind(await tokenHash(code), game.id, payload, new Date(now.getTime() + TRANSFER_TTL_MS).toISOString()),
+    ]);
+    return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresInMinutes: TRANSFER_TTL_MS / 60000 };
+  }
+
+  private async transferRedeem(input: Input): Promise<Json> {
+    const code = phpTrim(str(input.code)).toUpperCase().replace(/[\s-]/g, '');
+    const invalid = new DomainError('Kód je neplatný nebo už vypršel.', 404);
+    if (!/^[A-Z0-9]{8}$/.test(code)) throw invalid;
+    const hash = await tokenHash(code);
+    // Smazání a vrácení v jednom příkazu: kód lze použít jen jednou.
+    const row = await this.db.prepare(
+      'DELETE FROM transfer_codes WHERE code_hash = ? AND expires_at > ? RETURNING payload',
+    ).bind(hash, nowIso()).first<{ payload: string }>();
+    if (!row) throw invalid;
+    const credentials = JSON.parse(await openCredentials(code, row.payload)) as Json;
+    return { credentials };
   }
 
   /** Optimistický zámek: selže, pokud se hra od načtení změnila; jinak zvýší verzi. */
@@ -373,6 +464,42 @@ function backoff(attempt: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const TRANSFER_TTL_MS = 10 * 60 * 1000;
+const TRANSFER_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/** 8 znaků z 32 (40 bitů) — při platnosti 10 minut nelze rozumně uhodnout. */
+function transferCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, byte => TRANSFER_ALPHABET[byte & 31]).join('');
+}
+
+async function transferKey(code: string, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: new TextEncoder().encode('kruh-transfer-v1'), info: new Uint8Array() },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    [usage],
+  );
+}
+
+async function sealCredentials(code: string, plaintext: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv }, await transferKey(code, 'encrypt'), new TextEncoder().encode(plaintext),
+  ));
+  return btoa(String.fromCharCode(...iv, ...ciphertext));
+}
+
+async function openCredentials(code: string, sealed: string): Promise<string> {
+  const bytes = Uint8Array.from(atob(sealed), char => char.charCodeAt(0));
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: bytes.slice(0, 12) }, await transferKey(code, 'decrypt'), bytes.slice(12),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 function busyError(): DomainError {
   return new DomainError('Hru právě upravuje někdo jiný. Zkus to prosím znovu.', 409);
 }
@@ -384,6 +511,7 @@ function busyError(): DomainError {
  */
 class GameTx {
   readonly statements: D1PreparedStatement[] = [];
+  readonly notes: Note[] = [];
   private readonly players = new Map<string, PlayerRow>();
   private readonly now = nowIso();
 
@@ -461,6 +589,7 @@ class GameTx {
     this.game.status = 'active';
     this.game.started_at = this.now;
     this.exec("UPDATE games SET status = 'active', started_at = ? WHERE id = ?", this.now, this.game.id);
+    this.notes.push({ kind: 'game_started', allPlayers: true });
   }
 
   report(_input: Input): void {
@@ -493,12 +622,15 @@ class GameTx {
     const reportId = uuidV4();
     if (this.game.kill_mode === 'confirm') {
       this.insertReport(reportId, me.id, victim.id, 'pending');
+      this.notes.push({ kind: 'kill_confirm', playerId: victim.id });
     } else if (this.game.kill_mode === 'appeal') {
       this.insertReport(reportId, me.id, victim.id, 'provisional');
+      this.notes.push({ kind: 'kill_appeal', playerId: victim.id });
       this.setPlayerStatus(victim, 'dead');
       this.setTarget(me, victim.target_id);
     } else {
       this.insertReport(reportId, me.id, victim.id, 'confirmed', this.now);
+      this.notes.push({ kind: 'kill_instant', playerId: victim.id });
       this.setPlayerStatus(victim, 'dead');
       this.setTarget(me, victim.target_id, true);
       this.finishIfWinner();
@@ -514,13 +646,16 @@ class GameTx {
     if (!report) throw new DomainError('Tato vražda už byla uzavřena.');
 
     if (boolValue(input.accepted ?? false)) {
+      if (report.status === 'pending') this.notes.push({ kind: 'kill_confirmed', playerId: report.killer_id });
       this.finalize(report);
     } else if (report.status === 'provisional') {
       this.setPlayerStatus(me, 'alive');
       this.setTarget(this.player(report.killer_id), me.id);
       this.setReportStatus(report, 'rejected');
+      this.notes.push({ kind: 'appeal_rejected', playerId: report.killer_id });
     } else {
       this.setReportStatus(report, 'rejected');
+      this.notes.push({ kind: 'kill_rejected', playerId: report.killer_id });
     }
   }
 
@@ -541,6 +676,7 @@ class GameTx {
       "UPDATE games SET status = 'finished', ended_at = ?, ended_reason = 'admin' WHERE id = ?",
       this.now, this.game.id,
     );
+    this.notes.push({ kind: 'game_ended', allPlayers: true, admins: true });
   }
 
   // ------------------------------------------------------------- helpers
@@ -578,6 +714,7 @@ class GameTx {
         "UPDATE games SET status = 'finished', ended_at = ?, ended_reason = 'winner' WHERE id = ? AND status = 'active'",
         this.now, this.game.id,
       );
+      this.notes.push({ kind: 'game_ended', allPlayers: true, admins: true });
     }
   }
 }

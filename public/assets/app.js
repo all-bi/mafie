@@ -12,6 +12,7 @@
   let endStep = 0;
   let endText = '';
   let copied = false;
+  let transfer = null; // { code, expiresInMinutes } — otevřené okno s kódem přenosu
 
   function esc(value) {
     return String(value ?? '')
@@ -85,10 +86,17 @@
           <button type="button" data-action="mode-join" class="${mode === 'join' ? 'active' : ''}">Připojit se</button>
           <button type="button" data-action="mode-create" class="${mode === 'create' ? 'active' : ''}">Založit hru</button>
         </div>
-        ${mode === 'join' ? `<form id="join-form">
+        ${mode === 'transfer' ? `<form id="transfer-form">
+          <p class="hint">Na zařízení, kde už ve hře jsi, zvol „Přenést na jiné zařízení“ a opiš sem kód.</p>
+          <label>Kód přenosu<input name="code" required maxlength="9" placeholder="TŘEBA AB3D-7KXQ" autocapitalize="characters" autocomplete="off"></label>
+          <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Přenáším…' : 'Pokračovat ve hře'}</button>
+          <button type="button" class="link" data-action="mode-join">Zpět</button>
+        </form>` : mode === 'join' ? `<form id="join-form">
           <label>Kód hry<input name="code" required maxlength="6" value="${joinCode}" placeholder="TŘEBA K7M2PX" autocapitalize="characters"></label>
           <label>Tvoje jméno<input name="name" required maxlength="40" placeholder="Jak tě znají ostatní"></label>
           <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Připojuji…' : 'Vstoupit do kruhu'}</button>
+          <button type="button" class="link" data-action="mode-transfer">Už hraji na jiném zařízení</button>
+          ${iosNeedsInstall() ? '<p class="hint">Na iPhonu fungují upozornění jen z ikony na ploše. Nejdřív zvol Sdílet → Přidat na plochu a připoj se až z ikony.</p>' : ''}
         </form>` : `<form id="create-form">
           <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
           <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240">Polibkem na tvář bez přítomnosti svědků.</textarea></label>
@@ -168,16 +176,20 @@
     }
     if (game.status === 'active' && !player) content += `<section class="card"><p class="card-label">Pohled organizátora</p><h2>Hra právě probíhá.</h2><p>Průběžné statistiky jsou skryté. Hru můžeš pouze předčasně ukončit.</p>${gameState.roster ? roster(gameState.roster) : ''}</section>`;
     if (game.status === 'finished' && gameState.stats) content += results(gameState.stats, game.endedReason === 'admin');
+    content += pushCard(game);
 
     root.innerHTML = `<main class="app-shell"><header class="topbar"><div class="mini-brand"><i></i><span>Kruh</span></div><span class="status status-${esc(game.status)}">${game.status === 'registration' ? 'Registrace' : game.status === 'active' ? 'Hra běží' : 'Ukončeno'}</span></header>
       <section class="game-head"><p class="eyebrow">${esc(game.code)}</p><h1>${esc(game.name)}</h1>${player ? `<p class="identity">Hraješ jako <strong>${esc(player.name)}</strong></p>` : ''}</section>
       ${error ? `<div class="alert error" role="alert">${esc(error)}</div>` : ''}${content}
       ${admin?.canEnd && game.status === 'active' ? '<section class="admin-zone"><button class="text-danger" data-action="end-open">Předčasně ukončit hru</button></section>' : ''}
       ${game.status !== 'finished' ? `<button class="logout" data-action="refresh" ${busy ? 'disabled' : ''}>Obnovit stav hry</button>` : ''}
+      ${pushStatus === 'on' && gameState.push && game.status !== 'finished' ? '<button class="logout" data-action="push-disable">Vypnout upozornění</button>' : ''}
+      ${game.status !== 'finished' ? '<button class="logout" data-action="transfer-create">Přenést na jiné zařízení</button>' : ''}
       <button class="logout" data-action="logout">Odhlásit toto zařízení</button>
-      ${killModal(game, player)}${endModal()}
+      ${killModal(game, player)}${endModal()}${transferModal()}
     </main>`;
     root.dataset.invite = invite.toString();
+    if (!pushSynced && gameState.push) queueMicrotask(syncPush);
   }
 
   function render() {
@@ -195,6 +207,15 @@
     const form = new FormData(event.target);
     busy = true; error = ''; render();
     try {
+      if (event.target.id === 'transfer-form') {
+        const response = await api({ action: 'transferRedeem', code: form.get('code') });
+        saveCredentials(response.credentials);
+        gameState = await api({ action: 'state', ...credentials });
+        lastRefresh = Date.now();
+        mode = 'join';
+        pushSynced = false;
+        return;
+      }
       const payload = event.target.id === 'join-form'
         ? { action: 'join', code: form.get('code'), name: form.get('name') }
         : { action: 'create', name: form.get('name'), rule: form.get('rule'), adminName: form.get('adminName'), adminPlays: form.get('adminPlays') === 'on', killMode: form.get('killMode'), showRoster: form.get('showRoster') === 'on' };
@@ -202,6 +223,7 @@
       saveCredentials(response.credentials);
       gameState = await api({ action: 'state', ...credentials });
       lastRefresh = Date.now();
+      pushSynced = false;
     } catch (cause) { error = cause instanceof Error ? cause.message : 'Akce se nepodařila.'; }
     finally { busy = false; render(); schedulePoll(); }
   });
@@ -219,7 +241,11 @@
     const button = event.target.closest('[data-action]');
     if (!button || button.disabled) return;
     const action = button.dataset.action;
-    if (action === 'mode-join' || action === 'mode-create') { mode = action === 'mode-join' ? 'join' : 'create'; error = ''; render(); }
+    if (action === 'mode-join' || action === 'mode-create' || action === 'mode-transfer') { mode = action.slice(5); error = ''; render(); }
+    if (action === 'push-enable') await enablePush();
+    if (action === 'push-disable') await disablePush();
+    if (action === 'transfer-create') await createTransfer();
+    if (action === 'transfer-close') { transfer = null; render(); }
     if (action === 'copy') { await navigator.clipboard.writeText(root.dataset.invite); copied = true; render(); setTimeout(() => { copied = false; render(); }, 1600); }
     if (action === 'start') await act('start');
     if (action === 'respond-yes') await act('respond', { reportId: gameState.incoming.id, accepted: true });
@@ -234,8 +260,141 @@
     if (action === 'end-cancel') { endStep = 0; endText = ''; render(); }
     if (action === 'end-confirm') { endStep = 0; endText = ''; await act('end'); }
     if (action === 'refresh') { lastRefresh = Date.now(); await refresh(); schedulePoll(); }
-    if (action === 'logout') { saveCredentials(null); gameState = null; error = ''; render(); schedulePoll(); }
+    if (action === 'logout') { forgetPushOnServer(); transfer = null; saveCredentials(null); gameState = null; error = ''; render(); schedulePoll(); }
   });
+
+  // ---------------------------------------------------- push upozornění
+  // Stav: unsupported | ios-install | default | denied | on
+  const pushOffKey = 'kruh-push-off';
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const isIos = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  let pushStatus = pushSupported ? 'default' : (isIos && !isStandalone ? 'ios-install' : 'unsupported');
+  let pushSynced = false;
+  let registrationPromise = null;
+
+  function iosNeedsInstall() { return isIos && !isStandalone; }
+
+  function pushRegistration() {
+    if (!registrationPromise) registrationPromise = navigator.serviceWorker.register('/sw.js');
+    return registrationPromise;
+  }
+
+  function keyBytes(base64url) {
+    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+    return Uint8Array.from(binary, char => char.charCodeAt(0));
+  }
+
+  function sameKey(buffer, base64url) {
+    if (!buffer) return false;
+    const a = new Uint8Array(buffer); const b = keyBytes(base64url);
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+  }
+
+  function pushOff() { try { return localStorage.getItem(pushOffKey) === '1'; } catch { return false; } }
+  function setPushOff(value) { try { value ? localStorage.setItem(pushOffKey, '1') : localStorage.removeItem(pushOffKey); } catch { /* nic */ } }
+
+  /** Přihlásí odběr k aktuální hře (při povolení i po každém přihlášení do hry). */
+  async function syncPush() {
+    const publicKey = gameState?.push?.publicKey;
+    if (pushSynced || !pushSupported || !credentials || !publicKey) return;
+    const wanted = Notification.permission === 'denied' ? 'denied' : 'default';
+    if (Notification.permission !== 'granted' || pushOff()) {
+      if (pushStatus !== wanted) { pushStatus = wanted; render(); }
+      return;
+    }
+    pushSynced = true;
+    try {
+      const registration = await pushRegistration();
+      let subscription = await registration.pushManager.getSubscription();
+      if (subscription && !sameKey(subscription.options.applicationServerKey, publicKey)) {
+        await subscription.unsubscribe();
+        subscription = null;
+      }
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+      }
+      await api({ action: 'subscribe', ...credentials, subscription: subscription.toJSON() });
+      pushStatus = 'on';
+    } catch (cause) {
+      // Žádné automatické opakování; uživatel to může zkusit znovu tlačítkem.
+      pushStatus = 'default';
+      error = cause instanceof Error ? cause.message : 'Upozornění se nepodařilo zapnout.';
+    }
+    render();
+  }
+
+  async function enablePush() {
+    if (!pushSupported) return;
+    setPushOff(false);
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') { pushStatus = permission === 'denied' ? 'denied' : 'default'; render(); return; }
+    pushSynced = false;
+    await syncPush();
+  }
+
+  async function disablePush() {
+    setPushOff(true);
+    try {
+      const registration = await pushRegistration();
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await api({ action: 'unsubscribe', ...credentials, endpoint: subscription.endpoint });
+        await subscription.unsubscribe();
+      }
+    } catch { /* odběr už neexistuje */ }
+    pushStatus = 'default'; pushSynced = false; render();
+  }
+
+  /** Při odhlášení zařízení přestane dostávat upozornění z této hry. */
+  function forgetPushOnServer() {
+    if (!pushSupported || !credentials || pushStatus !== 'on') return;
+    const current = credentials;
+    pushSynced = false;
+    pushRegistration()
+      .then(registration => registration.pushManager.getSubscription())
+      .then(subscription => subscription && api({ action: 'unsubscribe', ...current, endpoint: subscription.endpoint }))
+      .catch(() => {});
+  }
+
+  function pushCard(game) {
+    if (!gameState.push || game.status === 'finished') return '';
+    if (pushStatus === 'on' || pushStatus === 'unsupported') return '';
+    const text = 'Dostaneš zprávu, když tě někdo zabije, když máš novou oběť nebo když hra začne či skončí. Jména se ve zprávách neobjevují.';
+    if (pushStatus === 'ios-install') {
+      return `<section class="card notify"><p class="card-label">Upozornění</p><p>Na iPhonu fungují upozornění jen v aplikaci přidané na plochu.</p>
+        <ol class="steps"><li>Klepni níže na <b>Přenést na jiné zařízení</b> a poznamenej si kód.</li><li>V Safari zvol <b>Sdílet → Přidat na plochu</b>.</li><li>Otevři Kruh z plochy, zvol <b>Už hraji na jiném zařízení</b> a zadej kód.</li></ol></section>`;
+    }
+    if (pushStatus === 'denied') {
+      return `<section class="card notify"><p class="card-label">Upozornění</p><p>Upozornění jsou v prohlížeči zablokovaná. Povol je v nastavení tohoto webu a stránku obnov.</p></section>`;
+    }
+    return `<section class="card notify"><p class="card-label">Upozornění</p><p>${text}</p><button class="secondary" data-action="push-enable" ${busy ? 'disabled' : ''}>Zapnout upozornění</button></section>`;
+  }
+
+  if (pushSupported) {
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data?.type === 'kruh-refresh' && credentials && !busy) {
+        lastRefresh = Date.now();
+        refresh(true).then(schedulePoll);
+      }
+    });
+  }
+
+  // ------------------------------------------------- přenos na jiné zařízení
+
+  async function createTransfer() {
+    if (!credentials || busy) return;
+    busy = true; error = ''; render();
+    try { transfer = await api({ action: 'transferCreate', ...credentials }); }
+    catch (cause) { error = cause instanceof Error ? cause.message : 'Kód se nepodařilo vytvořit.'; }
+    finally { busy = false; render(); }
+  }
+
+  function transferModal() {
+    if (!transfer) return '';
+    return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><p class="eyebrow">Přenos na jiné zařízení</p><h2>Kód přenosu</h2><div class="code">${esc(transfer.code)}</div><p>Na druhém zařízení otevři Kruh, zvol <b>Už hraji na jiném zařízení</b> a zadej tento kód. Platí ${esc(transfer.expiresInMinutes)} minut a jen jednou. Nikomu ho neukazuj — kdo ho zadá, hraje za tebe.</p><button class="secondary full" data-action="transfer-close">Hotovo</button></section></div>`;
+  }
 
   // Obnovování stavu dimenzované na free plán Cloudflare (100 000 požadavků/den):
   // 50 hráčů × 24 h s otevřenou aplikací se vejde do limitu.

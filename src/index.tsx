@@ -2,11 +2,13 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { FC } from 'hono/jsx';
 import { GameService, type Input } from './game';
+import { dispatch, type PushEnv } from './push';
 import { DomainError } from './util';
 
+export { PushOutbox } from './outbox';
+
 type Env = {
-  Bindings: {
-    DB: D1Database;
+  Bindings: PushEnv & {
     ASSETS: Fetcher;
   };
 };
@@ -37,6 +39,12 @@ const Page: FC = () => (
       <meta property="og:title" content="Kruh" />
       <meta property="og:description" content="Jeden kruh. Jeden vítěz." />
       <meta property="og:image" content="assets/og.png" />
+      <meta name="apple-mobile-web-app-title" content="Kruh" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <link rel="manifest" href="manifest.webmanifest" />
+      <link rel="icon" href="assets/icon-192.png" type="image/png" />
+      <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
       <title>Kruh — hra Mafie</title>
       <link rel="stylesheet" href="assets/app.css" />
       <script src="assets/app.js" defer></script>
@@ -108,7 +116,14 @@ app.all('/api.php', async c => {
   }
 
   try {
-    return jsonResponse(await new GameService(c.env.DB).handle(input));
+    const service = new GameService(c.env);
+    const result = await service.handle(input);
+    // Upozornění se posílají až po zápisu do D1 a neblokují odpověď.
+    if (service.notifications) {
+      const { gameId, notes } = service.notifications;
+      c.executionCtx.waitUntil(dispatch(c.env, gameId, notes));
+    }
+    return jsonResponse(result);
   } catch (error) {
     if (error instanceof DomainError) {
       const status = error.status >= 400 && error.status <= 599 ? error.status : 400;
