@@ -31,6 +31,7 @@ import { isAllowedEndpoint, isValidKeys, pushConfigured, type Note, type PushEnv
 
 type GameStatus = 'registration' | 'active' | 'finished';
 type KillMode = 'confirm' | 'appeal' | 'instant';
+type KillAlerts = 'none' | 'first' | 'every';
 type PlayerStatus = 'alive' | 'dead';
 type ReportStatus = 'pending' | 'provisional' | 'confirmed' | 'rejected' | 'dismissed' | 'cancelled';
 
@@ -41,6 +42,8 @@ interface GameRow {
   rule_text: string;
   status: GameStatus;
   kill_mode: KillMode;
+  kill_alerts: KillAlerts;
+  kills_announced: number;
   show_roster: number;
   admin_token_hash: string;
   admin_player_id: string | null;
@@ -60,6 +63,7 @@ interface PlayerRow {
   status: PlayerStatus;
   target_id: string | null;
   kills_count: number;
+  circle_pos: number | null;
   joined_at: string;
   eliminated_at: string | null;
 }
@@ -108,7 +112,9 @@ export class GameService {
       case 'start': return this.mutate(input, tx => tx.start(input));
       case 'report': return this.mutate(input, tx => tx.report(input));
       case 'respond': return this.mutate(input, tx => tx.respond(input));
+      case 'died': return this.mutate(input, tx => tx.died(input));
       case 'end': return this.mutate(input, tx => tx.end(input));
+      case 'delete': return this.deleteGame(input);
       case 'subscribe': return this.subscribe(input);
       case 'unsubscribe': return this.unsubscribe(input);
       case 'transferCreate': return this.transferCreate(input);
@@ -130,6 +136,8 @@ export class GameService {
 
     let killMode = str(input.killMode || 'appeal') as KillMode;
     if (!['confirm', 'appeal', 'instant'].includes(killMode)) killMode = 'appeal';
+    let killAlerts = str(input.killAlerts || 'first') as KillAlerts;
+    if (!['none', 'first', 'every'].includes(killAlerts)) killAlerts = 'first';
 
     const gameId = uuidV4();
     const adminToken = accessToken();
@@ -145,9 +153,9 @@ export class GameService {
       const code = await this.uniqueCode();
       const statements = [
         this.db.prepare(
-          `INSERT INTO games (id, code, name, rule_text, status, kill_mode, show_roster, admin_token_hash, created_at)
-           VALUES (?, ?, ?, ?, 'registration', ?, ?, ?, ?)`,
-        ).bind(gameId, code, name, rule, killMode, showRoster, adminHash, now),
+          `INSERT INTO games (id, code, name, rule_text, status, kill_mode, kill_alerts, show_roster, admin_token_hash, created_at)
+           VALUES (?, ?, ?, ?, 'registration', ?, ?, ?, ?, ?)`,
+        ).bind(gameId, code, name, rule, killMode, killAlerts, showRoster, adminHash, now),
       ];
       if (playerId && playerHash) {
         statements.push(
@@ -251,7 +259,12 @@ export class GameService {
     // Druhá dávka: všechno, co závisí na hře/hráči, jedním round-tripem.
     const queries: Record<string, D1PreparedStatement> = {};
     if (game.admin_player_id) {
-      queries.admin = this.db.prepare('SELECT status FROM players WHERE id = ?').bind(game.admin_player_id);
+      // Hrající organizátor je „mimo hru“ až po definitivní smrti: dokud může vraždu
+      // potvrdit nebo odvolat, nesmí vidět nic navíc.
+      queries.admin = this.db.prepare(
+        `SELECT p.status, EXISTS (SELECT 1 FROM kill_reports r WHERE r.victim_id = p.id AND r.status IN ('pending', 'provisional')) AS open_kill
+         FROM players p WHERE p.id = ?`,
+      ).bind(game.admin_player_id);
     }
     if (player) {
       if (player.target_id && player.target_id !== player.id) {
@@ -275,9 +288,11 @@ export class GameService {
     if (game.status === 'finished' || game.show_roster || isAdmin) {
       queries.roster = this.db.prepare(PLAYERS_BY_GAME).bind(game.id);
     }
-    if (game.status === 'finished') {
+    // Statistiky: po skončení hry všem, během hry jen organizátorovi, který sám nehraje.
+    const statsVisible = game.status === 'finished' || (isAdmin && !game.admin_player_id && game.status === 'active');
+    if (statsVisible) {
       queries.events = this.db.prepare(
-        `SELECT r.reported_at, r.killer_id, k.name AS killer, v.name AS victim
+        `SELECT r.reported_at, r.killer_id, r.victim_id, k.name AS killer, v.name AS victim
          FROM kill_reports r
          JOIN players k ON k.id = r.killer_id
          JOIN players v ON v.id = r.victim_id
@@ -291,7 +306,8 @@ export class GameService {
       return index === -1 ? [] : (results[index]!.results as Record<string, unknown>[]);
     };
 
-    const adminIsAlive = rows('admin')[0]?.status === 'alive';
+    const adminRow = rows('admin')[0];
+    const adminIsAlive = adminRow?.status === 'alive' || Boolean(adminRow?.open_kill);
     const canManage = isAdmin && !(game.status === 'active' && adminIsAlive);
 
     const response: Json = { game: publicGame(game), version: game.version };
@@ -313,7 +329,7 @@ export class GameService {
     const players = rows('roster') as unknown as PlayerRow[];
     if (rosterVisible) response.roster = players.map(publicPlayer);
     if (isAdmin) response.admin = { canManage, canEnd: game.status === 'active' };
-    if (game.status === 'finished') {
+    if (statsVisible) {
       response.stats = statistics(game, players, rows('events') as unknown as KillEvent[]);
     }
     return response;
@@ -359,6 +375,20 @@ export class GameService {
         throw error;
       }
     }
+  }
+
+  // ------------------------------------------------------------ smazání
+
+  /** Organizátor smaže hru i se všemi hráči, hlášeními, odběry a kódy (ON DELETE CASCADE). */
+  private async deleteGame(input: Input): Promise<Json> {
+    const { game, isAdmin } = await this.auth(input);
+    if (!isAdmin) throw new DomainError('Hru může smazat pouze organizátor.', 403);
+    await this.db.batch([
+      this.db.prepare('UPDATE games SET admin_player_id = NULL WHERE id = ?').bind(game.id),
+      this.db.prepare('UPDATE players SET target_id = NULL WHERE game_id = ?').bind(game.id),
+      this.db.prepare('DELETE FROM games WHERE id = ?').bind(game.id),
+    ]);
+    return { ok: true };
   }
 
   // ---------------------------------------------------------- upozornění
@@ -585,6 +615,8 @@ class GameTx {
     secureShuffle(players);
     players.forEach((player, index) => {
       this.setTarget(player, players[(index + 1) % players.length]!.id);
+      player.circle_pos = index;
+      this.exec('UPDATE players SET circle_pos = ? WHERE id = ?', index, player.id);
     });
     this.game.status = 'active';
     this.game.started_at = this.now;
@@ -626,11 +658,13 @@ class GameTx {
     } else if (this.game.kill_mode === 'appeal') {
       this.insertReport(reportId, me.id, victim.id, 'provisional');
       this.notes.push({ kind: 'kill_appeal', playerId: victim.id });
+      this.announceKill(me.id, victim.id);
       this.setPlayerStatus(victim, 'dead');
       this.setTarget(me, victim.target_id);
     } else {
       this.insertReport(reportId, me.id, victim.id, 'confirmed', this.now);
       this.notes.push({ kind: 'kill_instant', playerId: victim.id });
+      this.announceKill(me.id, victim.id);
       this.setPlayerStatus(victim, 'dead');
       this.setTarget(me, victim.target_id, true);
       this.finishIfWinner();
@@ -659,6 +693,46 @@ class GameTx {
     }
   }
 
+  /**
+   * Oběť sama nahlásí, že byla zabita. Platí okamžitě v každém režimu: vrah nic
+   * hlásit ani potvrzovat nemusí a rovnou dostane další oběť. Jméno vraha se
+   * oběti neprozradí.
+   */
+  died(_input: Input): void {
+    const me = this.me;
+    if (!me || me.status !== 'alive') throw new DomainError('Smrt může nahlásit pouze živý hráč.', 403);
+    if (this.game.status !== 'active') throw new DomainError('Hra právě neběží.');
+
+    // Vrah už vraždu nahlásil a čeká na potvrzení: stačí ji potvrdit.
+    const incoming = this.latestOpen('victim_id', me.id);
+    if (incoming?.status === 'pending') {
+      this.notes.push({ kind: 'kill_confirmed', playerId: incoming.killer_id });
+      this.finalize(incoming);
+      return;
+    }
+
+    const killer = this.playerList.find(player => player.status === 'alive' && player.target_id === me.id && player.id !== me.id);
+    if (!killer) throw new DomainError('Smrt teď nejde nahlásit. Obnov stránku.');
+
+    const mine = this.latestOpen('killer_id', me.id);
+    if (mine?.status === 'pending') throw new DomainError('Nejdřív musí tvoje oběť potvrdit tvou vraždu.');
+    if (mine?.status === 'provisional') this.finalize(mine);
+
+    const killersPrevious = this.latestOpen('killer_id', killer.id);
+    if (killersPrevious?.status === 'provisional') this.finalize(killersPrevious);
+
+    for (const report of this.reports) {
+      if (report.killer_id === killer.id && report.status === 'rejected') this.setReportStatus(report, 'dismissed', false);
+    }
+
+    this.insertReport(uuidV4(), killer.id, me.id, 'confirmed', this.now);
+    this.setPlayerStatus(me, 'dead');
+    this.setTarget(killer, me.target_id, true);
+    this.notes.push({ kind: 'victim_reported', playerId: killer.id });
+    this.announceKill(killer.id, me.id);
+    this.finishIfWinner();
+  }
+
   end(_input: Input): void {
     if (!this.isAdmin) throw new DomainError('Hru může ukončit pouze organizátor.', 403);
     if (this.game.status !== 'active') throw new DomainError('Hra právě neběží.');
@@ -681,6 +755,19 @@ class GameTx {
 
   // ------------------------------------------------------------- helpers
 
+  /** Oznámí vraždu ostatním podle nastavení hry (první / každá), bez jmen. */
+  private announceKill(killerId: string, victimId: string): void {
+    const alerts = this.game.kill_alerts;
+    if (alerts === 'none') return;
+    const first = !this.game.kills_announced;
+    if (!first && alerts !== 'every') return;
+    if (first) {
+      this.game.kills_announced = 1;
+      this.exec('UPDATE games SET kills_announced = 1 WHERE id = ?', this.game.id);
+    }
+    this.notes.push({ kind: first ? 'kill_first' : 'kill_next', allPlayers: true, admins: true, exclude: [killerId, victimId] });
+  }
+
   private insertReport(id: string, killerId: string, victimId: string, status: ReportStatus, resolvedAt: string | null = null): void {
     const report: ReportRow = {
       id, game_id: this.game.id, killer_id: killerId, victim_id: victimId, status, reported_at: this.now, resolved_at: resolvedAt,
@@ -697,7 +784,10 @@ class GameTx {
     const victim = this.player(report.victim_id);
     const killer = this.player(report.killer_id);
     if (report.status === 'pending') {
-      if (victim.status === 'alive') this.setPlayerStatus(victim, 'dead');
+      if (victim.status === 'alive') {
+        this.setPlayerStatus(victim, 'dead');
+        this.announceKill(killer.id, victim.id);
+      }
       this.setTarget(killer, victim.target_id, true);
     } else {
       this.addKill(killer);
@@ -724,6 +814,7 @@ class GameTx {
 interface KillEvent {
   reported_at: string;
   killer_id: string;
+  victim_id: string;
   killer: string;
   victim: string;
 }
@@ -736,6 +827,7 @@ function publicGame(game: GameRow): Json {
     rule: game.rule_text,
     status: game.status,
     killMode: game.kill_mode,
+    killAlerts: game.kill_alerts,
     showRoster: Boolean(game.show_roster),
     startedAt: iso(game.started_at),
     endedAt: iso(game.ended_at),
@@ -799,12 +891,30 @@ function statistics(game: GameRow, players: PlayerRow[], events: KillEvent[]): J
     return { label, count: best, names };
   });
 
+  // Kruh: hráči v pořadí při startu a vraždy s dobou od chvíle, kdy vrah oběť dostal
+  // (start hry nebo jeho předchozí vražda).
+  const positioned = players.every(player => player.circle_pos !== null && player.circle_pos !== undefined);
+  const lastKillAt = new Map<string, number>();
+  const startMs = game.started_at ? Date.parse(game.started_at) : 0;
+  const kills = events.map(event => {
+    const at = Date.parse(event.reported_at);
+    const since = lastKillAt.get(event.killer_id) ?? startMs;
+    lastKillAt.set(event.killer_id, at);
+    return { killerId: event.killer_id, victimId: event.victim_id, afterMs: Math.max(0, at - since) };
+  });
+  const circle = positioned
+    ? [...players].sort((a, b) => Number(a.circle_pos) - Number(b.circle_pos)).map(player => ({ id: player.id, name: player.name, status: player.status }))
+    : null;
+
   return {
+    live: game.status !== 'finished',
+    circle,
+    kills,
     winner: game.ended_reason === 'winner' && alive.length === 1 ? alive[0]!.name : null,
     firstVictim,
     leaders,
     players: players.map(publicPlayer),
     windows,
-    timeline: events.map(event => ({ killer: event.killer, victim: event.victim, at: iso(event.reported_at) })),
+    timeline: events.map((event, index) => ({ killer: event.killer, victim: event.victim, at: iso(event.reported_at), afterMs: kills[index]!.afterMs })),
   };
 }
