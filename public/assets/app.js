@@ -47,7 +47,9 @@
     if (!credentials) return;
     if (!quiet) busy = true;
     try {
-      gameState = await api({ action: 'state', ...credentials });
+      const known = quiet && gameState && typeof gameState.version === 'number' ? { knownVersion: gameState.version } : {};
+      const next = await api({ action: 'state', ...credentials, ...known });
+      if (!next.unchanged) gameState = next;
       error = '';
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Nepodařilo se načíst hru.';
@@ -63,9 +65,10 @@
     try {
       await api({ action, ...credentials, ...extra });
       gameState = await api({ action: 'state', ...credentials });
+      lastRefresh = Date.now();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Akci se nepodařilo dokončit.';
-    } finally { busy = false; render(); }
+    } finally { busy = false; render(); schedulePoll(); }
   }
 
   function brandMark() { return '<div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>'; }
@@ -198,8 +201,9 @@
       const response = await api(payload);
       saveCredentials(response.credentials);
       gameState = await api({ action: 'state', ...credentials });
+      lastRefresh = Date.now();
     } catch (cause) { error = cause instanceof Error ? cause.message : 'Akce se nepodařila.'; }
-    finally { busy = false; render(); }
+    finally { busy = false; render(); schedulePoll(); }
   });
 
   root.addEventListener('input', event => {
@@ -229,24 +233,54 @@
     if (action === 'end-final-step') { endStep = 3; render(); }
     if (action === 'end-cancel') { endStep = 0; endText = ''; render(); }
     if (action === 'end-confirm') { endStep = 0; endText = ''; await act('end'); }
-    if (action === 'refresh') { lastRefresh = Date.now(); await refresh(); }
-    if (action === 'logout') { saveCredentials(null); gameState = null; error = ''; render(); }
+    if (action === 'refresh') { lastRefresh = Date.now(); await refresh(); schedulePoll(); }
+    if (action === 'logout') { saveCredentials(null); gameState = null; error = ''; render(); schedulePoll(); }
   });
 
-  // Stav se načítá jen při otevření stránky, po vlastní akci a když se stránka
-  // znovu zobrazí (návrat do záložky / odemčení telefonu). Žádné pravidelné dotazy.
+  // Obnovování stavu dimenzované na free plán Cloudflare (100 000 požadavků/den):
+  // 50 hráčů × 24 h s otevřenou aplikací se vejde do limitu.
+  //  * živý hráč / organizátor: 1× za minutu, mrtvý hráč: 1× za 5 minut,
+  //  * skrytá stránka (jiná aplikace, zamčený telefon) a skončená hra: nic,
+  //  * navíc ihned po vlastní akci, při znovuzobrazení stránky (nejvýš 1× za 30 s) a tlačítkem,
+  //  * když se nic nezměnilo, server odpoví jen „beze změny“ (levné čtení z D1).
+  const POLL_ALIVE_MS = 60 * 1000;
+  const POLL_DEAD_MS = 5 * 60 * 1000;
+  const SHOW_THROTTLE_MS = 30 * 1000;
   let lastRefresh = 0;
+  let pollTimer = null;
+
+  function pollDelay() {
+    if (!credentials || document.hidden) return 0;
+    if (!gameState) return POLL_ALIVE_MS;
+    if (gameState.game?.status === 'finished') return 0;
+    if (gameState.player?.status === 'dead' && !gameState.incoming) return POLL_DEAD_MS;
+    return POLL_ALIVE_MS;
+  }
+  function schedulePoll() {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    const interval = pollDelay();
+    if (!interval) return;
+    const delay = Math.max(1000, lastRefresh + interval - Date.now());
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      if (!busy) { lastRefresh = Date.now(); await refresh(true); }
+      schedulePoll();
+    }, delay);
+  }
   async function refreshOnShow() {
-    if (!credentials || document.hidden || busy) return;
-    if (gameState?.game?.status === 'finished') return;
-    if (Date.now() - lastRefresh < 2000) return;
-    lastRefresh = Date.now();
-    await refresh(true);
+    if (!credentials) return;
+    if (document.hidden) { schedulePoll(); return; }
+    if (!busy && gameState?.game?.status !== 'finished' && Date.now() - lastRefresh >= SHOW_THROTTLE_MS) {
+      lastRefresh = Date.now();
+      await refresh(true);
+    }
+    schedulePoll();
   }
   document.addEventListener('visibilitychange', refreshOnShow);
   window.addEventListener('focus', refreshOnShow);
   window.addEventListener('pageshow', event => { if (event.persisted) refreshOnShow(); });
 
   render();
-  if (credentials) { lastRefresh = Date.now(); refresh(); }
+  if (credentials) { lastRefresh = Date.now(); refresh().then(schedulePoll); }
 })();

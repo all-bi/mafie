@@ -230,6 +230,13 @@ export class GameService {
     const isAdmin = await this.isAdmin(game, adminToken);
     if (!player && !isAdmin) throw new DomainError('Přístup do hry vypršel.', 401);
 
+    // Každá změna hry (připojení, start, vražda, odpověď, konec) zvýší games.version.
+    // Pokud klient už má aktuální verzi, stačí odpovědět „beze změny“ — ušetří to
+    // většinu čtení z D1 při pravidelném obnovování.
+    if (typeof input.knownVersion === 'number' && input.knownVersion === game.version) {
+      return { unchanged: true, version: game.version };
+    }
+
     // Druhá dávka: všechno, co závisí na hře/hráči, jedním round-tripem.
     const queries: Record<string, D1PreparedStatement> = {};
     if (game.admin_player_id) {
@@ -276,7 +283,7 @@ export class GameService {
     const adminIsAlive = rows('admin')[0]?.status === 'alive';
     const canManage = isAdmin && !(game.status === 'active' && adminIsAlive);
 
-    const response: Json = { game: publicGame(game) };
+    const response: Json = { game: publicGame(game), version: game.version };
     if (player) {
       const target = rows('target')[0];
       response.player = { ...publicPlayer(player), target: target ? { id: target.id, name: target.name } : null };

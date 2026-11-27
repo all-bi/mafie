@@ -26,7 +26,7 @@
   // Vlastní doména. Zóna albiovi.cz musí být na Cloudflare (je).
   // Pokud chceš jinou subdoménu, změň "pattern".
   "routes": [
-    { "pattern": "app.albiovi.cz", "custom_domain": true }
+    { "pattern": "mafie.albiovi.cz", "custom_domain": true }
   ],
 
   "workers_dev": true,

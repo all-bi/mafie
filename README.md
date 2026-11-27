@@ -2,7 +2,7 @@
 
 Mobilní webová aplikace pro organizaci společenské hry Mafie. Běží zdarma na
 **Cloudflare Workers** (free plán) s databází **Cloudflare D1** na adrese
-`https://app.albiovi.cz`.
+`https://mafie.albiovi.cz`.
 
 - Server: TypeScript + [Hono](https://hono.dev), HTML kostra přes Hono JSX (`src/index.tsx`)
 - Herní logika: `src/game.ts` (přepis `legacy/src/GameService.php`)
@@ -141,12 +141,12 @@ soubor v `migrations/`, spusť před pushem `npm run db:migrate:remote`.
 
 Ruční nasazení bez Gitu: `npm run deploy`.
 
-### 5. Vlastní doména app.albiovi.cz
+### 5. Vlastní doména mafie.albiovi.cz
 
 Zóna `albiovi.cz` už je na Cloudflare a `wrangler.jsonc` obsahuje:
 
 ```jsonc
-"routes": [{ "pattern": "app.albiovi.cz", "custom_domain": true }]
+"routes": [{ "pattern": "mafie.albiovi.cz", "custom_domain": true }]
 ```
 
 Při deployi Cloudflare doménu sám připojí: vytvoří DNS záznam i HTTPS
@@ -154,7 +154,7 @@ certifikát. Pokud už v DNS existuje záznam `app` (A, AAAA nebo CNAME),
 **nejdřív ho v DNS smaž**, jinak se doména nepřipojí.
 
 Ruční varianta: **Workers & Pages → kruh-mafie → Settings → Domains & Routes →
-Add → Custom domain** → `app.albiovi.cz`.
+Add → Custom domain** → `mafie.albiovi.cz`.
 
 Jiná subdoména: změň `pattern` ve `wrangler.jsonc`. Aplikace je dostupná i na
 `kruh-mafie.<účet>.workers.dev`. Když to nechceš, nastav `"workers_dev": false`.
@@ -174,12 +174,28 @@ Ověřeno v dokumentaci Cloudflare (listopad 2026):
 | D1 velikost | 500 MB | Nevýznamné. |
 | Dotazy na jeden požadavek | 50 (batch = 1) | Aplikace používá nejvýš 4 batche. |
 
-**Obnovování stavu:** aplikace se serveru pravidelně neptá. Stav načte při
-otevření stránky, po vlastní akci (vražda, potvrzení, spuštění…), při návratu
-do záložky nebo odemčení telefonu a po klepnutí na odkaz „Obnovit stav hry“.
-Spotřeba je tak jen několik požadavků na hráče za hodinu. Denní limit
-100 000 požadavků je pro běžné hraní prakticky nedosažitelný. Po překročení by
-Cloudflare až do půlnoci UTC vracel chybu 1027 / 429.
+**Obnovování stavu** (cíl: 50 hráčů, 24 hodin hraní denně):
+
+- Živý hráč a organizátor obnovují stav 1× za minutu, mrtvý hráč 1× za 5 minut.
+- Skrytá stránka (jiná aplikace, zamčený telefon) a skončená hra se neobnovují vůbec.
+- Navíc se stav načte ihned po vlastní akci, při návratu do aplikace
+  (nejvýš 1× za 30 s) a tlačítkem „Obnovit stav hry“.
+- Když se ve hře od posledního dotazu nic nezměnilo, server odpoví jen „beze
+  změny“ a z D1 přečte 2 řádky místo 12–62.
+
+Propočet nejhoršího případu, kdy všech 50 hráčů celých 24 h zírá na otevřenou
+aplikaci a nikdo neumře:
+
+| | Výpočet | Výsledek | Limit |
+|---|---|---|---|
+| Požadavky | 50 × 60/h × 24 h | 72 000 + akce a načtení stránky | 100 000 / den |
+| D1 čtení (beze změny) | 72 000 × 2 řádky | ~144 000 | 5 000 000 / den |
+| D1 čtení (po změně) | 200 změn × 50 hráčů × 62 řádků | ~620 000 | |
+
+Ve skutečnosti je spotřeba mnohem nižší: mrtví se ptají 5× méně a zamčené
+telefony vůbec. Po překročení limitu by Cloudflare až do půlnoci UTC vracel
+chybu 1027 / 429. Intervaly se nastavují na začátku sekce obnovování
+v `public/assets/app.js` (`POLL_ALIVE_MS`, `POLL_DEAD_MS`).
 
 **CPU:** nejdražší jsou statistiky po skončení hry (počet hráčů × počet vražd).
 I pro stovky hráčů jde o jednotky milisekund. Spuštění hry s 25 hráči i souběžné
