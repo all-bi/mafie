@@ -43,12 +43,26 @@ jobs:
 
       - name: Ověření tokenu
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::Chybí secret CLOUDFLARE_TOKEN"; exit 1; fi
-          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" \
-            | jq '{success, status: .result.status}' \
-          || curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/user/tokens/verify" | jq '{success, status: .result.status}'
+          raw="$CLOUDFLARE_API_TOKEN"
+          if [ -z "$raw" ]; then echo "::error::Chybí secret CLOUDFLARE_TOKEN"; exit 1; fi
+          # Odstranit mezery a konce řádků, které se mohly přidat při vkládání.
+          token=$(printf '%s' "$raw" | tr -d '[:space:]')
+          echo "::add-mask::$token"
+          [ "$token" != "$raw" ] && echo "Pozn.: ze secretu byly odstraněny mezery/konce řádků."
+          echo "Délka tokenu: ${#token} znaků"
+          if [[ "$token" =~ ^[0-9a-f]{37}$ ]]; then
+            echo "::error::Tohle vypadá jako Global API Key, ne API token. Vytvoř API token (My Profile → API Tokens → Create Token)."
+            exit 1
+          fi
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
+          ok=0
+          for url in "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+                     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify"; do
+            body=$(curl -sS -H "Authorization: Bearer $token" "$url")
+            echo "$url -> $(printf '%s' "$body" | jq -c '{success, status: .result.status, errors: [.errors[]?.message]}')"
+            if [ "$(printf '%s' "$body" | jq -r '.success')" = "true" ]; then ok=1; fi
+          done
+          if [ "$ok" != 1 ]; then echo "::error::Cloudflare token odmítl (neplatný, zrušený nebo nezkopírovaný celý)."; exit 1; fi
 
       - name: D1 databáze (najít nebo vytvořit)
         id: db
