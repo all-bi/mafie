@@ -70,7 +70,14 @@ jobs:
         run: |
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database"
           auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-          id=$(curl -fsS "${auth[@]}" "$api?name=$DB_NAME" | jq -r --arg n "$DB_NAME" '.result[] | select(.name == $n) | .uuid' | head -n1)
+          echo "Účty dostupné s tímto tokenem:"
+          curl -sS "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts" | jq -c '{success, errors: [.errors[]?.message], accounts: [.result[]? | {id, name}]}'
+          list=$(curl -sS "${auth[@]}" "$api?name=$DB_NAME")
+          if [ "$(printf '%s' "$list" | jq -r '.success')" != "true" ]; then
+            echo "::error::D1 API: $(printf '%s' "$list" | jq -c '[.errors[]? | {code, message}]')"
+            exit 1
+          fi
+          id=$(printf '%s' "$list" | jq -r --arg n "$DB_NAME" '.result[] | select(.name == $n) | .uuid' | head -n1)
           if [ -z "$id" ]; then
             echo "Databáze $DB_NAME neexistuje, vytvářím…"
             id=$(curl -fsS "${auth[@]}" -H "Content-Type: application/json" -X POST "$api" \
