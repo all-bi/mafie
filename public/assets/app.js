@@ -318,7 +318,10 @@
     const invite = new URL(location.href); invite.search = ''; invite.hash = ''; invite.searchParams.set('kod', game.code);
     let content = '';
     if (game.status === 'registration') {
-      content += `<section class="card invite"><div class="invite-row"><div><p class="card-label">Kód pro přátele</p><div class="code">${esc(game.code)}</div></div><button class="secondary" data-action="copy">${copied ? 'Zkopírováno' : 'Kopírovat pozvánku'}</button></div><div class="rule-strip"><span>Pravidlo vraždy</span><p>${esc(game.rule)}</p></div></section>`;
+      const inviteText = `Zvu tě do hry Mafie „${game.name}“. Kód hry: ${game.code}. Připoj se tady: ${invite.toString()}`;
+      const whatsapp = `https://wa.me/?text=${encodeURIComponent(inviteText)}`;
+      content += `<section class="card invite"><div class="invite-row"><div><p class="card-label">Kód pro přátele</p><div class="code">${esc(game.code)}</div></div></div>
+        <div class="invite-actions"><a class="secondary whatsapp" href="${esc(whatsapp)}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M4.5 19.5l1.2-3.7A8 8 0 1 1 8.3 18.4z"/></svg>Poslat přes WhatsApp</a><button class="secondary" data-action="copy">${copied ? 'Zkopírováno' : 'Kopírovat odkaz'}</button></div><div class="rule-strip"><span>Pravidlo vraždy</span><p>${esc(game.rule)}</p></div></section>`;
       if (gameState.roster) content += roster(gameState.roster, 'roster-registration');
       const missing = Math.max(0, 3 - (gameState.roster?.length || 0));
       if (admin?.canManage) content += `<section class="action-zone"><button class="primary" data-action="start" ${(busy || missing) ? 'disabled' : ''}>${missing ? `Ke spuštění chybí ${missing === 1 ? '1 hráč' : `${missing} hráči`}` : 'Uzavřít registraci a spustit'}</button></section>`;
