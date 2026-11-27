@@ -9,6 +9,7 @@
   let busy = false;
   let error = '';
   let killStep = 0;
+  let deathStep = 0;
   let endStep = 0;
   let endText = '';
   let copied = false;
@@ -30,6 +31,11 @@
     if (value) { localStorage.setItem(storageKey, JSON.stringify(value)); rememberGame(value); }
     else localStorage.removeItem(storageKey);
   }
+
+  // Přezdívka se pamatuje mezi hrami (předvyplní se při připojení i založení hry).
+  const nicknameKey = 'kruh-nickname';
+  function savedNickname() { try { return localStorage.getItem(nicknameKey) || ''; } catch { return ''; } }
+  function rememberNickname(value) { const name = String(value || '').trim().slice(0, 40); if (name) { try { localStorage.setItem(nicknameKey, name); } catch { /* nic */ } } }
 
   // Moje hry: zařízení si pamatuje přístupy ke všem hrám, které založilo nebo do nich vstoupilo.
   const gamesKey = 'kruh-games-v1';
@@ -126,14 +132,14 @@
           <button type="button" class="link" data-action="mode-join">Zpět</button>
         </form>` : mode === 'join' ? `<form id="join-form">
           <label>Kód hry<input name="code" required maxlength="6" value="${joinCode}" placeholder="TŘEBA K7M2PX" autocapitalize="characters"></label>
-          <label>Tvoje jméno<input name="name" required maxlength="40" placeholder="Jak tě znají ostatní"></label>
+          <label>Tvoje jméno<input name="name" required maxlength="40" placeholder="Jak tě znají ostatní" value="${esc(savedNickname())}" autocomplete="nickname"></label>
           <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Připojuji…' : 'Vstoupit do rodiny'}</button>
           <button type="button" class="link" data-action="mode-transfer">Už hraji na jiném zařízení</button>
           ${iosNeedsInstall() ? '<p class="hint">Na iPhonu fungují upozornění jen z ikony na ploše. Nejdřív zvol Sdílet → Přidat na plochu a připoj se až z ikony.</p>' : ''}
         </form>` : `<form id="create-form">
           <div class="field-row">
             <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
-            <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor"></label>
+            <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor" value="${esc(savedNickname())}" autocomplete="nickname"></label>
           </div>
           <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na holou kůži bez svědků. Svědkem je kterýkoli hráč, živý i mrtvý.</textarea></label>
           <div class="check-row">
@@ -294,6 +300,12 @@
     return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><p class="eyebrow">Poslední kontrola</p><h2>Potvrdit provedenou vraždu?</h2><p>${esc(message)}</p><div class="modal-actions"><button class="secondary" data-action="kill-cancel">Zrušit</button><button class="primary danger" data-action="kill-confirm">Definitivně potvrdit</button></div></section></div>`;
   }
 
+  function deathModal() {
+    if (!deathStep) return '';
+    if (deathStep === 1) return `<div class="modal-backdrop"><section class="modal danger-modal" role="dialog" aria-modal="true"><p class="eyebrow">Nahlásit vlastní smrt</p><h2>Byl/a jsi zabit/a?</h2><p>Použij to, když tě tvůj vrah podle pravidel opravdu zabil. Nikdo nic potvrzovat nemusí a vrah hned dostane tvou oběť.</p><div class="modal-actions"><button class="secondary" data-action="death-cancel">Zpět</button><button class="danger-outline" data-action="death-next">Ano, byl/a</button></div></section></div>`;
+    return `<div class="modal-backdrop"><section class="modal danger-modal" role="dialog" aria-modal="true"><p class="eyebrow">Poslední kontrola</p><h2>Opravdu definitivně?</h2><p>Tvoje hra tím skončí. Tuto akci nelze vrátit.</p><div class="modal-actions"><button class="secondary" data-action="death-cancel">Zrušit</button><button class="danger" data-action="death-confirm">Definitivně potvrdit</button></div></section></div>`;
+  }
+
   function endModal() {
     if (!endStep) return '';
     if (endStep === 1) return `<div class="modal-backdrop"><section class="modal danger-modal" role="dialog" aria-modal="true"><p class="eyebrow">Nebezpečná akce</p><h2>Ukončit hru všem?</h2><p>Hra skončí bez vítěze a odhalí dosavadní výsledky. Tuto akci nelze vrátit.</p><div class="modal-actions"><button class="secondary" data-action="end-cancel">Ne, pokračovat</button><button class="danger-outline" data-action="end-next">Rozumím následkům</button></div></section></div>`;
@@ -316,7 +328,7 @@
       if (gameState.incoming) content += `<section class="card death-question"><div class="pulse-ring"></div><p class="eyebrow">Vyžaduje tvoji odpověď</p><h2>Byl/a jsi zabit/a?</h2><p>Potvrď, zda vražda proběhla podle pravidel. Jméno vraha zůstává skryté.</p><div class="two-actions"><button class="primary" data-action="respond-yes">Ano</button><button class="secondary danger-text" data-action="respond-no">Ne</button></div></section>`;
       if (gameState.rejected && player.status === 'alive') content += `<section class="alert warning"><strong>Oběť vraždu odmítla. Vyřeš to s ní.</strong><span>Po domluvě ji můžeš zadat znovu. Tato osoba je opět tvou obětí.</span></section>`;
       if (gameState.outgoing) content += `<section class="alert waiting-box"><strong>${gameState.outgoing.status === 'pending' ? 'Čeká se na potvrzení oběti.' : 'Předchozí oběť může vraždu odvolat.'}</strong><span>${gameState.outgoing.status === 'provisional' ? 'Jakmile provedeš další vraždu, předchozí už nebude možné odvolat.' : 'Novou oběť získáš po potvrzení.'}</span></section>`;
-      if (player.status === 'alive') content += `<section class="target-card"><p class="card-label">Tvoje současná oběť</p>${player.target ? secretName(player.target.name) : '<h2>Čeká se na uzavření vraždy</h2>'}<div class="rule-strip"><span>Pravidlo</span><p>${esc(game.rule)}</p></div><button class="kill-button" data-action="kill-open" ${(busy || gameState.incoming || gameState.outgoing?.status === 'pending' || !player.target) ? 'disabled' : ''}>Zabil/a jsem svou oběť</button></section>`;
+      if (player.status === 'alive') content += `<section class="target-card"><p class="card-label">Tvoje současná oběť</p>${player.target ? secretName(player.target.name) : '<h2>Čeká se na uzavření vraždy</h2>'}<div class="rule-strip"><span>Pravidlo</span><p>${esc(game.rule)}</p></div><button class="kill-button" data-action="kill-open" ${(busy || gameState.incoming || gameState.outgoing?.status === 'pending' || !player.target) ? 'disabled' : ''}>Zabil/a jsem svou oběť</button>${!gameState.incoming && gameState.outgoing?.status !== 'pending' ? `<button type="button" class="link self-report" data-action="death-open" ${busy ? 'disabled' : ''}>Byl/a jsem zabit/a</button>` : ''}</section>`;
       else if (!gameState.incoming) content += '<section class="card dead"><div class="dead-mark">×</div><p class="eyebrow">Tvoje hra skončila</p><h2>Byl/a jsi zabit/a.</h2><p>Výsledky se odhalí až po konci celé hry.</p></section>';
       if (gameState.roster) content += roster(gameState.roster);
     }
@@ -339,7 +351,7 @@
       <button class="logout" data-action="my-games">Moje hry</button>
       <button class="logout" data-action="logout">Odhlásit</button>
       </nav>
-      ${killModal(game, player)}${endModal()}${transferModal()}
+      ${killModal(game, player)}${deathModal()}${endModal()}${transferModal()}
     </main>`;
     root.dataset.invite = invite.toString();
     if (!pushSynced && gameState.push) queueMicrotask(syncPush);
@@ -374,6 +386,7 @@
         ? { action: 'join', code: form.get('code'), name: form.get('name') }
         : { action: 'create', name: form.get('name'), rule: form.get('rule'), adminName: form.get('adminName'), adminPlays: form.get('adminPlays') === 'on', killMode: form.get('killMode'), killAlerts: form.get('killAlerts'), showRoster: form.get('showRoster') === 'on' };
       const response = await api(payload);
+      rememberNickname(payload.name && event.target.id === 'join-form' ? payload.name : payload.adminName);
       saveCredentials(response.credentials);
       gameState = await api({ action: 'state', ...credentials });
       lastRefresh = Date.now();
@@ -413,6 +426,10 @@
     if (action === 'respond-yes') await act('respond', { reportId: gameState.incoming.id, accepted: true });
     if (action === 'respond-no') await act('respond', { reportId: gameState.incoming.id, accepted: false });
     if (action === 'kill-open') { killStep = 1; render(); }
+    if (action === 'death-open') { deathStep = 1; render(); }
+    if (action === 'death-next') { deathStep = 2; render(); }
+    if (action === 'death-cancel') { deathStep = 0; render(); }
+    if (action === 'death-confirm') { deathStep = 0; await act('died'); }
     if (action === 'kill-next') { killStep = 2; render(); }
     if (action === 'kill-cancel') { killStep = 0; render(); }
     if (action === 'kill-confirm') { killStep = 0; await act('report'); }
@@ -458,7 +475,7 @@
   function stopActiveGame() {
     if (pollTimer) clearTimeout(pollTimer); pollTimer = null; transfer = null; revealUntil = 0;
     credentials = null; localStorage.removeItem(storageKey);
-    gameState = null; error = ''; killStep = 0; endStep = 0; pushSynced = false;
+    gameState = null; error = ''; killStep = 0; deathStep = 0; endStep = 0; pushSynced = false;
   }
 
   function openGame(gameId) {
@@ -513,8 +530,8 @@
     return `<div class="secret ${open ? 'open' : ''}">
       <h2>${open ? esc(name) : '<span class="masked" aria-label="Skryto">••••••</span>'}</h2>
       <button type="button" class="reveal" data-action="reveal" aria-label="${open ? 'Skrýt jméno oběti' : 'Zobrazit jméno oběti na 3 sekundy'}">${eyeIcon(!open)}</button>
-      ${open ? '<i class="reveal-bar"></i>' : `<small class="reveal-hint">${hint}</small>`}
-    </div>${!motionOn && motionSupported && motionNeedsPermission ? '<button type="button" class="link motion-link" data-action="motion-enable">Odkrývat i otočením telefonu</button>' : ''}`;
+      ${open ? '<i class="reveal-bar"></i>' : `<small class="reveal-hint">${!motionOn && motionSupported && motionNeedsPermission ? 'Klepni na očičko, nebo <button type="button" class="link motion-link" data-action="motion-enable">zapni odkrývání otočením telefonu</button>.' : hint}</small>`}
+    </div>`;
   }
 
   function reveal() {

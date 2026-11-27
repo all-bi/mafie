@@ -19,6 +19,7 @@ export type NoteKind =
   | 'kill_appeal'
   | 'kill_instant'
   | 'kill_confirmed'
+  | 'victim_reported'
   | 'kill_rejected'
   | 'appeal_rejected'
   | 'game_started'
@@ -57,6 +58,7 @@ const MESSAGES: Record<NoteKind, { title: string; body: string; urgency: 'high' 
   kill_appeal: { title: 'Byl/a jsi zabit/a.', body: 'Pokud vražda neproběhla podle pravidel, můžeš ji v aplikaci odvolat.', urgency: 'high', priority: 2 },
   kill_instant: { title: 'Byl/a jsi zabit/a.', body: 'Tvoje hra skončila. Výsledky uvidíš po konci celé hry.', urgency: 'high', priority: 2 },
   kill_confirmed: { title: 'Vražda potvrzena', body: 'Máš novou oběť. Podívej se do aplikace.', urgency: 'high', priority: 1 },
+  victim_reported: { title: 'Oběť nahlásila svou smrt', body: 'Máš novou oběť. Podívej se do aplikace.', urgency: 'high', priority: 1 },
   kill_rejected: { title: 'Oběť vraždu odmítla', body: 'Vyřeš situaci se svou obětí. Zůstává tvým cílem.', urgency: 'high', priority: 1 },
   appeal_rejected: { title: 'Vražda byla odvolána', body: 'Předchozí oběť vraždu odvolala a je opět tvým cílem.', urgency: 'high', priority: 1 },
   kill_first: { title: 'Padla první oběť', body: 'Rodina přišla o prvního člena. Dávej si pozor.', urgency: 'normal', priority: 0 },

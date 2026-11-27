@@ -112,6 +112,7 @@ export class GameService {
       case 'start': return this.mutate(input, tx => tx.start(input));
       case 'report': return this.mutate(input, tx => tx.report(input));
       case 'respond': return this.mutate(input, tx => tx.respond(input));
+      case 'died': return this.mutate(input, tx => tx.died(input));
       case 'end': return this.mutate(input, tx => tx.end(input));
       case 'delete': return this.deleteGame(input);
       case 'subscribe': return this.subscribe(input);
@@ -690,6 +691,46 @@ class GameTx {
       this.setReportStatus(report, 'rejected');
       this.notes.push({ kind: 'kill_rejected', playerId: report.killer_id });
     }
+  }
+
+  /**
+   * Oběť sama nahlásí, že byla zabita. Platí okamžitě v každém režimu: vrah nic
+   * hlásit ani potvrzovat nemusí a rovnou dostane další oběť. Jméno vraha se
+   * oběti neprozradí.
+   */
+  died(_input: Input): void {
+    const me = this.me;
+    if (!me || me.status !== 'alive') throw new DomainError('Smrt může nahlásit pouze živý hráč.', 403);
+    if (this.game.status !== 'active') throw new DomainError('Hra právě neběží.');
+
+    // Vrah už vraždu nahlásil a čeká na potvrzení: stačí ji potvrdit.
+    const incoming = this.latestOpen('victim_id', me.id);
+    if (incoming?.status === 'pending') {
+      this.notes.push({ kind: 'kill_confirmed', playerId: incoming.killer_id });
+      this.finalize(incoming);
+      return;
+    }
+
+    const killer = this.playerList.find(player => player.status === 'alive' && player.target_id === me.id && player.id !== me.id);
+    if (!killer) throw new DomainError('Smrt teď nejde nahlásit. Obnov stránku.');
+
+    const mine = this.latestOpen('killer_id', me.id);
+    if (mine?.status === 'pending') throw new DomainError('Nejdřív musí tvoje oběť potvrdit tvou vraždu.');
+    if (mine?.status === 'provisional') this.finalize(mine);
+
+    const killersPrevious = this.latestOpen('killer_id', killer.id);
+    if (killersPrevious?.status === 'provisional') this.finalize(killersPrevious);
+
+    for (const report of this.reports) {
+      if (report.killer_id === killer.id && report.status === 'rejected') this.setReportStatus(report, 'dismissed', false);
+    }
+
+    this.insertReport(uuidV4(), killer.id, me.id, 'confirmed', this.now);
+    this.setPlayerStatus(me, 'dead');
+    this.setTarget(killer, me.target_id, true);
+    this.notes.push({ kind: 'victim_reported', playerId: killer.id });
+    this.announceKill(killer.id, me.id);
+    this.finishIfWinner();
   }
 
   end(_input: Input): void {

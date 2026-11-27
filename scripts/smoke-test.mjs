@@ -149,6 +149,28 @@ async function main() {
   check(ks.game.status === 'finished' && ks.stats.winner === killer.name && ks.stats.timeline.length === 2, 'dvě okamžité vraždy ukončily hru');
   check(ks.stats.windows[0].count === 2 && ks.stats.firstVictim, 'statistiky oken a první oběti');
 
+  console.log('\nOběť sama nahlásí smrt („Byl/a jsem zabit/a“)');
+  const d = await setupGame('confirm', 3);
+  await api({ action: 'start', ...d.admin });
+  const states = await Promise.all(d.players.map(p => api({ action: 'state', ...p.cred })));
+  const victimP = d.players[0];
+  const killerP = d.players.find((p, i) => states[i].player.target?.name === victimP.name);
+  const selfTarget = states[0].player.target.name;
+  const died = await api({ action: 'died', ...victimP.cred });
+  check(!JSON.stringify(died).includes(killerP.name), 'odpověď neprozradí jméno vraha');
+  let vs2 = await api({ action: 'state', ...victimP.cred });
+  let ks2 = await api({ action: 'state', ...killerP.cred });
+  check(vs2.player.status === 'dead' && !vs2.incoming, 'oběť je mrtvá bez dalšího potvrzování');
+  check(ks2.player.target.name === selfTarget && ks2.player.killsCount === 1, 'vrah hned dostal oběť oběti a vraždu navíc');
+  // poslední dvojice: vrah nahlásí, oběť místo odpovědi zvolí „Byl/a jsem zabit/a“ -> konec hry
+  const lastVictim = d.players.find(p => p.name === selfTarget);
+  await api({ action: 'report', ...killerP.cred });
+  await api({ action: 'died', ...lastVictim.cred });
+  ks2 = await api({ action: 'state', ...killerP.cred });
+  check(ks2.game.status === 'finished' && ks2.stats.winner === killerP.name, 'čekající vražda se potvrdí a hra skončí vítězem');
+  const deadAgain = await fetch(`${BASE}/api.php`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'died', ...victimP.cred }) });
+  check(deadAgain.status === 403, 'mrtvý hráč smrt znovu nahlásit nemůže');
+
   console.log(failures ? `\n${failures} kontrol selhalo.` : '\nVšechny kontroly prošly.');
   process.exit(failures ? 1 : 0);
 }
