@@ -72,14 +72,19 @@
     } finally { busy = false; render(); schedulePoll(); }
   }
 
-  function brandMark() { return '<div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>'; }
+  // Logo: dva překrývající se kruhy (zadní je zčásti schovaný za předním).
+  function brandMark() {
+    return `<div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 58 42" width="58" height="42" fill="none" stroke="currentColor" stroke-width="1.6">
+      <defs><mask id="brand-cut"><rect width="58" height="42" fill="#fff"/><circle cx="21" cy="21" r="20" fill="#000"/></mask></defs>
+      <circle cx="36" cy="21" r="20" mask="url(#brand-cut)"/><circle cx="21" cy="21" r="20"/></svg></div>`;
+  }
 
   function renderLanding() {
     const joinCode = esc(new URLSearchParams(location.search).get('kod') || '');
     root.innerHTML = `<main class="landing landing-${mode}">
       <section class="hero">${brandMark()}<p class="eyebrow">Společenská hra v reálném světě</p>
-        <h1>Jeden kruh.<br><em>Jeden vítěz.</em></h1>
-        <p class="lede">Nenápadný průvodce vaší hrou Mafie. Každý zná jen svou oběť. O zbytek se postará Kruh.</p>
+        <h1>Každý má cíl.<br><em>Přežije jeden.</em></h1>
+        <p class="lede">Diskrétní průvodce vaší hrou Mafie. Hráči tvoří uzavřený kruh: každý zná jen svou oběť, nikdo svého vraha. Co se stane v rodině, zůstane v rodině.</p>
       </section>
       <section class="entry-card">
         <div class="tabs" role="tablist">
@@ -94,7 +99,7 @@
         </form>` : mode === 'join' ? `<form id="join-form">
           <label>Kód hry<input name="code" required maxlength="6" value="${joinCode}" placeholder="TŘEBA K7M2PX" autocapitalize="characters"></label>
           <label>Tvoje jméno<input name="name" required maxlength="40" placeholder="Jak tě znají ostatní"></label>
-          <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Připojuji…' : 'Vstoupit do kruhu'}</button>
+          <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Připojuji…' : 'Vstoupit do rodiny'}</button>
           <button type="button" class="link" data-action="mode-transfer">Už hraji na jiném zařízení</button>
           ${iosNeedsInstall() ? '<p class="hint">Na iPhonu fungují upozornění jen z ikony na ploše. Nejdřív zvol Sdílet → Přidat na plochu a připoj se až z ikony.</p>' : ''}
         </form>` : `<form id="create-form">
@@ -102,7 +107,7 @@
             <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
             <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor"></label>
           </div>
-          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na holou kůži bez přítomnosti svědků.</textarea></label>
+          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na holou kůži bez svědků. Svědek je kdokoli, kdo nehraje – živí ani mrtví hráči se nepočítají.</textarea></label>
           <div class="check-row">
             <label class="check"><input type="checkbox" name="adminPlays" checked><span><b>Hraji také</b><small>Zaživa neuvidíš nic navíc.</small></span></label>
             <label class="check"><input type="checkbox" name="showRoster"><span><b>Zobrazovat živé a mrtvé</b><small>Výchozí je úplné utajení.</small></span></label>
@@ -116,12 +121,12 @@
         </form>`}
         ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ''}
       </section>
-      <footer class="site-footer">Tajné cíle · Bez průběžných statistik · Pro mobil</footer>
+      <footer class="site-footer">Tajné cíle · Žádní svědci · Mlčenlivost</footer>
     </main>`;
   }
 
-  function roster(players) {
-    return `<section class="card roster"><div class="section-title"><p class="card-label">Hráči</p><span>${players.length}</span></div>
+  function roster(players, extraClass = '') {
+    return `<section class="card roster ${extraClass}"><div class="section-title"><p class="card-label">Hráči</p><span>${players.length}</span></div>
       <ul>${players.map(player => `<li><span class="player-dot ${player.status === 'dead' ? 'dead' : ''}"></span><b>${esc(player.name)}</b><small>${player.status === 'dead' ? 'mrtvý/á' : 've hře'}</small></li>`).join('')}</ul></section>`;
   }
 
@@ -136,7 +141,7 @@
   function results(stats, early) {
     const sorted = [...stats.players].sort((a, b) => b.killsCount - a.killsCount);
     return `<section class="results">
-      <div class="result-hero"><p class="eyebrow">${early ? 'Předčasně ukončeno' : 'Vítěz kruhu'}</p><h2>${esc(stats.winner || 'Bez vítěze')}</h2><p>${early ? 'Hra byla ukončena organizátorem.' : 'Poslední hráč, který zůstal naživu.'}</p></div>
+      <div class="result-hero"><p class="eyebrow">${early ? 'Předčasně ukončeno' : 'Poslední přeživší'}</p><h2>${esc(stats.winner || 'Bez vítěze')}</h2><p>${early ? 'Hra byla ukončena organizátorem.' : 'Jediný, kdo zůstal naživu.'}</p></div>
       <div class="stat-grid"><article><span>První oběť</span><strong>${esc(stats.firstVictim?.name || '—')}</strong><small>${stats.firstVictim ? `${formatDuration(stats.firstVictim.afterMs)} od startu` : 'Bez vražd'}</small></article>
       <article><span>Nejvíc vražd</span><strong>${esc(stats.leaders.map(item => item.name).join(', ') || '—')}</strong><small>${stats.leaders[0]?.kills || 0} celkem</small></article></div>
       <section class="card"><p class="card-label">Rekordy v čase</p><div class="window-list">${stats.windows.map(item => `<div><span>${esc(item.label)}</span><b>${esc(item.names.join(', ') || '—')}</b><strong>${item.count}</strong></div>`).join('')}</div></section>
@@ -164,10 +169,10 @@
     const invite = new URL(location.href); invite.search = ''; invite.hash = ''; invite.searchParams.set('kod', game.code);
     let content = '';
     if (game.status === 'registration') {
-      content += `<section class="card invite"><p class="card-label">Kód pro přátele</p><div class="code">${esc(game.code)}</div><button class="secondary" data-action="copy">${copied ? 'Odkaz zkopírován' : 'Kopírovat pozvánku'}</button></section>`;
-      content += `<section class="card rules"><p class="card-label">Pravidlo vraždy</p><p>${esc(game.rule)}</p></section>`;
-      if (gameState.roster) content += roster(gameState.roster);
-      if (admin?.canManage) content += `<section class="action-zone"><button class="primary" data-action="start" ${(busy || (gameState.roster?.length || 0) < 3) ? 'disabled' : ''}>Uzavřít registraci a spustit</button>${(gameState.roster?.length || 0) < 3 ? '<small>Ke spuštění jsou potřeba alespoň 3 hráči.</small>' : ''}</section>`;
+      content += `<section class="card invite"><div class="invite-row"><div><p class="card-label">Kód pro přátele</p><div class="code">${esc(game.code)}</div></div><button class="secondary" data-action="copy">${copied ? 'Zkopírováno' : 'Kopírovat pozvánku'}</button></div><div class="rule-strip"><span>Pravidlo vraždy</span><p>${esc(game.rule)}</p></div></section>`;
+      if (gameState.roster) content += roster(gameState.roster, 'roster-registration');
+      const missing = Math.max(0, 3 - (gameState.roster?.length || 0));
+      if (admin?.canManage) content += `<section class="action-zone"><button class="primary" data-action="start" ${(busy || missing) ? 'disabled' : ''}>${missing ? `Ke spuštění chybí ${missing === 1 ? '1 hráč' : `${missing} hráči`}` : 'Uzavřít registraci a spustit'}</button></section>`;
       else content += '<p class="waiting">Čeká se, až organizátor spustí hru.</p>';
     }
     if (game.status === 'active' && player) {
@@ -182,15 +187,15 @@
     if (game.status === 'finished' && gameState.stats) content += results(gameState.stats, game.endedReason === 'admin');
     content += pushCard(game);
 
-    root.innerHTML = `<main class="app-shell"><header class="topbar"><div class="mini-brand"><i></i><span>Kruh</span></div><span class="status status-${esc(game.status)}">${game.status === 'registration' ? 'Registrace' : game.status === 'active' ? 'Hra běží' : 'Ukončeno'}</span></header>
-      <section class="game-head"><p class="eyebrow">${esc(game.code)}</p><h1>${esc(game.name)}</h1>${player ? `<p class="identity">Hraješ jako <strong>${esc(player.name)}</strong></p>` : ''}</section>
+    root.innerHTML = `<main class="app-shell"><header class="topbar"><div class="mini-brand"><i></i><span>Mafie</span></div><span class="status status-${esc(game.status)}">${game.status === 'registration' ? 'Registrace' : game.status === 'active' ? 'Hra běží' : 'Ukončeno'}</span></header>
+      <section class="game-head">${game.status === 'registration' ? '' : `<p class="eyebrow">${esc(game.code)}</p>`}<h1>${esc(game.name)}</h1>${player ? `<p class="identity">Hraješ jako <strong>${esc(player.name)}</strong></p>` : ''}</section>
       ${error ? `<div class="alert error" role="alert">${esc(error)}</div>` : ''}${content}
       ${admin?.canEnd && game.status === 'active' ? '<section class="admin-zone"><button class="text-danger" data-action="end-open">Předčasně ukončit hru</button></section>' : ''}
 <nav class="footer-links">
-      ${game.status !== 'finished' ? `<button class="logout" data-action="refresh" ${busy ? 'disabled' : ''}>Obnovit stav hry</button>` : ''}
+      ${game.status !== 'finished' ? `<button class="logout" data-action="refresh" ${busy ? 'disabled' : ''}>Obnovit</button>` : ''}
       ${pushStatus === 'on' && gameState.push && game.status !== 'finished' ? '<button class="logout" data-action="push-disable">Vypnout upozornění</button>' : ''}
       ${game.status !== 'finished' ? '<button class="logout" data-action="transfer-create">Přenést na jiné zařízení</button>' : ''}
-      <button class="logout" data-action="logout">Odhlásit toto zařízení</button>
+      <button class="logout" data-action="logout">Odhlásit</button>
       </nav>
       ${killModal(game, player)}${endModal()}${transferModal()}
     </main>`;
@@ -201,7 +206,7 @@
   function render() {
     if (!credentials) return renderLanding();
     if (!gameState) {
-      root.innerHTML = `<main class="loading">${brandMark()}<p>${esc(error || 'Načítám kruh…')}</p><button class="link" data-action="logout">Vrátit se</button></main>`;
+      root.innerHTML = `<main class="loading">${brandMark()}<p>${esc(error || 'Svolávám rodinu…')}</p><button class="link" data-action="logout">Vrátit se</button></main>`;
       return;
     }
     renderGame();
@@ -461,8 +466,8 @@
     if (pushStatus === 'on' || pushStatus === 'unsupported') return '';
     const text = 'Dostaneš zprávu, když tě někdo zabije, když máš novou oběť nebo když hra začne či skončí. Jména se ve zprávách neobjevují.';
     if (pushStatus === 'ios-install') {
-      return `<section class="card notify"><p class="card-label">Upozornění</p><p>Na iPhonu fungují upozornění jen v aplikaci přidané na plochu.</p>
-        <ol class="steps"><li>Klepni níže na <b>Přenést na jiné zařízení</b> a poznamenej si kód.</li><li>V Safari zvol <b>Sdílet → Přidat na plochu</b>.</li><li>Otevři Kruh z plochy, zvol <b>Už hraji na jiném zařízení</b> a zadej kód.</li></ol></section>`;
+      return `<section class="card notify"><details><summary><span class="card-label">Upozornění</span><span>Na iPhonu jen z ikony na ploše. <u>Jak na to</u></span></summary>
+        <ol class="steps"><li>Klepni níže na <b>Přenést na jiné zařízení</b> a poznamenej si kód.</li><li>V Safari zvol <b>Sdílet → Přidat na plochu</b>.</li><li>Otevři Mafii z plochy, zvol <b>Už hraji na jiném zařízení</b> a zadej kód.</li></ol></details></section>`;
     }
     if (pushStatus === 'denied') {
       return `<section class="card notify"><p class="card-label">Upozornění</p><p>Upozornění jsou v prohlížeči zablokovaná. Povol je v nastavení tohoto webu a stránku obnov.</p></section>`;
@@ -491,7 +496,7 @@
 
   function transferModal() {
     if (!transfer) return '';
-    return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><p class="eyebrow">Přenos na jiné zařízení</p><h2>Kód přenosu</h2><div class="code">${esc(transfer.code)}</div><p>Na druhém zařízení otevři Kruh, zvol <b>Už hraji na jiném zařízení</b> a zadej tento kód. Platí ${esc(transfer.expiresInMinutes)} minut a jen jednou. Nikomu ho neukazuj — kdo ho zadá, hraje za tebe.</p><button class="secondary full" data-action="transfer-close">Hotovo</button></section></div>`;
+    return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><p class="eyebrow">Přenos na jiné zařízení</p><h2>Kód přenosu</h2><div class="code">${esc(transfer.code)}</div><p>Na druhém zařízení otevři Mafii, zvol <b>Už hraji na jiném zařízení</b> a zadej tento kód. Platí ${esc(transfer.expiresInMinutes)} minut a jen jednou. Nikomu ho neukazuj — kdo ho zadá, hraje za tebe.</p><button class="secondary full" data-action="transfer-close">Hotovo</button></section></div>`;
   }
 
   // Obnovování stavu dimenzované na free plán Cloudflare (100 000 požadavků/den):

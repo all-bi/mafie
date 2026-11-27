@@ -141,7 +141,7 @@ form .link{display:block;margin:8px auto 0}
 @media (max-width:600px){
 .landing{min-height:100svh;padding:12px 16px 10px}
 .hero{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"logo eyebrow" "logo title" "lede lede";column-gap:14px;align-items:center;padding:8px 2px 14px}
-.hero .brand-mark{grid-area:logo;width:52px;height:52px;margin:0}
+.hero .brand-mark{grid-area:logo;width:auto;height:auto;margin:0}
 .brand-mark span{width:36px;height:36px;border-width:1.4px}
 .brand-mark span:nth-child(3){left:8px}
 .hero .eyebrow{grid-area:eyebrow;align-self:end;margin:0 0 4px;font-size:9.5px;letter-spacing:.12em}
@@ -221,3 +221,36 @@ form .link{margin-top:0;padding:6px}
 .motion-link{display:block;margin:-10px 0 10px;padding:4px 0;font-size:12px}
 @media (prefers-reduced-motion:reduce){.reveal-bar{animation:reveal-countdown 3s linear forwards!important}}
 @media (max-width:600px){.secret{margin-bottom:12px}.reveal{width:42px;height:42px}}
+/* Logo: dva kruhy (SVG). */
+.brand-mark{width:auto;height:auto;color:var(--red)}
+.brand-mark svg{display:block;width:80px;height:auto}
+.loading .brand-mark svg{width:64px}
+/* Registrace: kód, pozvánka a pravidlo v jedné kartě. */
+.invite{text-align:left}
+.invite-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.invite .code{margin:2px 0 0;padding-left:0}
+.invite .secondary{white-space:nowrap}
+.invite .rule-strip{margin:16px -20px -20px;padding:12px 20px 16px;border-radius:0 0 18px 18px}
+.invite{overflow:hidden}
+/* Upozornění na iPhonu: návod rozbalitelný. */
+.notify details summary{list-style:none;cursor:pointer;display:grid;gap:6px;color:var(--muted);font-size:14px}
+.notify details summary::-webkit-details-marker{display:none}
+.notify details summary .card-label{margin:0}
+.notify details[open] summary u{display:none}
+@media (max-width:600px){
+.hero .brand-mark svg{width:60px}
+.invite .code{font-size:28px;letter-spacing:.14em}
+.invite .secondary{min-height:40px;padding:8px 12px;font-size:14px}
+.invite .rule-strip{margin:12px -16px -14px;padding:10px 16px 12px}
+.notify details summary{font-size:13.5px}
+}
+.roster-registration li small{display:none}
+.roster-registration li{grid-template-columns:auto 1fr}
+@media (max-width:600px){
+.roster-registration ul{grid-template-columns:1fr 1fr 1fr;column-gap:10px}
+.section-title .card-label{margin:0}
+.roster ul{margin-top:6px}
+.footer-links{flex-wrap:nowrap;gap:0 16px}
+.footer-links .logout{white-space:nowrap}
+.notify p{line-height:1.4}
+}

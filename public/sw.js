@@ -1,4 +1,4 @@
-// Service worker aplikace Kruh — jen pro push upozornění (žádné offline cache).
+// Service worker aplikace Mafie — jen pro push upozornění (žádné offline cache).
 'use strict';
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -7,7 +7,7 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 self.addEventListener('push', event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
-  const title = typeof data.title === 'string' ? data.title : 'Kruh';
+  const title = typeof data.title === 'string' ? data.title : 'Mafie';
   event.waitUntil(Promise.all([
     self.registration.showNotification(title, {
       body: typeof data.body === 'string' ? data.body : '',
