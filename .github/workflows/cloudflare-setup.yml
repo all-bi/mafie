@@ -23,7 +23,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}
+  # Surová hodnota; ořezaný token se exportuje jako CLOUDFLARE_API_TOKEN v kroku ověření.
+  CF_TOKEN_RAW: ${{ secrets.CLOUDFLARE_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: 20fad3598c1bdc2e46b244920847eeca
   DB_NAME: mafie
 
@@ -43,7 +44,7 @@ jobs:
 
       - name: Ověření tokenu
         run: |
-          raw="$CLOUDFLARE_API_TOKEN"
+          raw="$CF_TOKEN_RAW"
           if [ -z "$raw" ]; then echo "::error::Chybí secret CLOUDFLARE_TOKEN"; exit 1; fi
           # Odstranit mezery a konce řádků, které se mohly přidat při vkládání.
           token=$(printf '%s' "$raw" | tr -d '[:space:]')
