@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "kruh-mafie",
+  "name": "mafie",
   "main": "src/index.tsx",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -16,8 +16,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "kruh-mafie",
-      // Doplň ID z výstupu `npx wrangler d1 create kruh-mafie` (viz README).
+      "database_name": "mafie",
+      // Doplň ID z výstupu `npx wrangler d1 create mafie` (viz README).
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }

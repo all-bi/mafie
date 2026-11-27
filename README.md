@@ -67,7 +67,7 @@ npx wrangler login
 ### 1. Vytvoření D1 databáze a doplnění ID
 
 ```bash
-npx wrangler d1 create kruh-mafie
+npx wrangler d1 create mafie
 ```
 
 Výstup obsahuje `database_id`, například:
@@ -80,7 +80,7 @@ Toto ID vlož do `wrangler.jsonc` místo `00000000-0000-0000-0000-000000000000`,
 commitni a pushni. ID není tajný údaj, do repozitáře patří.
 
 (Alternativa: Cloudflare dashboard → **Storage & Databases → D1 SQL Database →
-Create**, název `kruh-mafie`, ID zkopíruješ z detailu databáze.)
+Create**, název `mafie`, ID zkopíruješ z detailu databáze.)
 
 ### 2. Migrace a import dat
 
@@ -104,17 +104,17 @@ Import dat ze staré MySQL databáze:
    Skript vypíše počty her, hráčů a hlášení a případná upozornění.
 4. Nahraj ho do D1:
    ```bash
-   npx wrangler d1 execute kruh-mafie --remote --file=data.d1.sql
+   npx wrangler d1 execute mafie --remote --file=data.d1.sql
    ```
 5. Kontrola:
    ```bash
-   npx wrangler d1 execute kruh-mafie --remote --command "SELECT status, COUNT(*) FROM games GROUP BY status"
+   npx wrangler d1 execute mafie --remote --command "SELECT status, COUNT(*) FROM games GROUP BY status"
    ```
 
 Import spouštěj do prázdné databáze, jen jednou. Pokud se nepovede, smaž data:
 
 ```bash
-npx wrangler d1 execute kruh-mafie --remote --command "DELETE FROM kill_reports; UPDATE games SET admin_player_id = NULL; DELETE FROM players; DELETE FROM games;"
+npx wrangler d1 execute mafie --remote --command "DELETE FROM kill_reports; UPDATE games SET admin_player_id = NULL; DELETE FROM players; DELETE FROM games;"
 ```
 
 Pak import opakuj. Otisky přístupových tokenů se převádějí beze změny, takže
@@ -134,7 +134,7 @@ Heslo k databázi už potřeba není, D1 se připojuje přes binding ve `wrangle
    npx wrangler secret put VAPID_PUBLIC_KEY
    npx wrangler secret put VAPID_PRIVATE_KEY
    ```
-   (nebo v dashboardu: **Workers & Pages → kruh-mafie → Settings → Variables
+   (nebo v dashboardu: **Workers & Pages → mafie → Settings → Variables
    and Secrets → Add → Secret**)
 
 | Secret | Co to je |
@@ -153,13 +153,21 @@ znovu (aplikace to při dalším otevření udělá sama, pokud už mají povole
    (Connect to Git).
 2. Propoj GitHub účet a vyber repozitář `all-bi/mafie`.
 3. Nastavení:
-   - **Project name:** `kruh-mafie` (musí se shodovat s `"name"` ve `wrangler.jsonc`)
+   - **Project name:** `mafie` (musí se shodovat s `"name"` ve `wrangler.jsonc`)
    - **Production branch:** větev, ze které chceš nasazovat (např. `main` po
      sloučení, nebo `claude/cloudflare` pro test)
    - **Build command:** nech prázdné (závislosti se nainstalují samy)
    - **Deploy command:** `npx wrangler deploy`
    - **Root directory:** `/`
 4. **Save and Deploy.** Každý další push do produkční větve se nasadí sám.
+
+**Pozor na pořadí:**
+
+- Dokud ve `wrangler.jsonc` není skutečné `database_id` (krok 1), každé
+  sestavení selže.
+- Sestavení jiných větví než produkční používají `wrangler versions upload`,
+  které neumí vytvořit nový Durable Object. Proto **poprvé nasaď produkční
+  větev** (nebo ručně `npm run deploy`). Pak už projdou i ostatní větve.
 
 První nasazení vytvoří i Durable Object `PushOutbox` (frontu hromadných
 upozornění). Je zdarma na free plánu, s úložištěm SQLite.
@@ -181,11 +189,11 @@ Při deployi Cloudflare doménu sám připojí: vytvoří DNS záznam i HTTPS
 certifikát. Pokud už v DNS existuje záznam `app` (A, AAAA nebo CNAME),
 **nejdřív ho v DNS smaž**, jinak se doména nepřipojí.
 
-Ruční varianta: **Workers & Pages → kruh-mafie → Settings → Domains & Routes →
+Ruční varianta: **Workers & Pages → mafie → Settings → Domains & Routes →
 Add → Custom domain** → `mafie.albiovi.cz`.
 
 Jiná subdoména: změň `pattern` ve `wrangler.jsonc`. Aplikace je dostupná i na
-`kruh-mafie.<účet>.workers.dev`. Když to nechceš, nastav `"workers_dev": false`.
+`mafie.<účet>.workers.dev`. Když to nechceš, nastav `"workers_dev": false`.
 
 ---
 
@@ -238,7 +246,7 @@ jsem lokálně otestoval. V produkci můžeš CPU čas sledovat v dashboardu:
 
 **Zálohy:** D1 Time Travel umožňuje obnovit databázi do libovolného okamžiku
 za posledních 7 dní (`npx wrangler d1 time-travel restore`). Ruční export:
-`npx wrangler d1 export kruh-mafie --remote --output=zaloha.sql`.
+`npx wrangler d1 export mafie --remote --output=zaloha.sql`.
 
 ---
 
