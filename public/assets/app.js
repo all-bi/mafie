@@ -102,14 +102,14 @@
             <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
             <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor"></label>
           </div>
-          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na tvář bez přítomnosti svědků.</textarea></label>
+          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na holou kůži bez přítomnosti svědků.</textarea></label>
           <div class="check-row">
             <label class="check"><input type="checkbox" name="adminPlays" checked><span><b>Hraji také</b><small>Zaživa neuvidíš nic navíc.</small></span></label>
             <label class="check"><input type="checkbox" name="showRoster"><span><b>Zobrazovat živé a mrtvé</b><small>Výchozí je úplné utajení.</small></span></label>
           </div>
           <fieldset class="mode-picker"><legend>Práva oběti po vraždě</legend>
-            <label class="radio"><input type="radio" name="killMode" value="confirm" checked><span><b>Povinné potvrzení</b><small>Nová oběť se ukáže až po potvrzení zabitého hráče.</small></span></label>
-            <label class="radio"><input type="radio" name="killMode" value="appeal"><span><b>Možnost odvolání</b><small>Nová oběť se ukáže ihned. Vraždu lze odvolat do další vraždy stejného vraha.</small></span></label>
+            <label class="radio"><input type="radio" name="killMode" value="confirm"><span><b>Povinné potvrzení</b><small>Nová oběť se ukáže až po potvrzení zabitého hráče.</small></span></label>
+            <label class="radio"><input type="radio" name="killMode" value="appeal" checked><span><b>Možnost odvolání</b><small>Nová oběť se ukáže ihned. Vraždu lze odvolat do další vraždy stejného vraha.</small></span></label>
             <label class="radio"><input type="radio" name="killMode" value="instant"><span><b>Žádná práva oběti</b><small>Vražda platí okamžitě a nelze ji odvolat.</small></span></label>
           </fieldset>
           <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Zakládám…' : 'Založit hru'}</button>
