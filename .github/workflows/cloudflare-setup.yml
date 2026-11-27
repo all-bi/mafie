@@ -3,7 +3,7 @@
 #
 # Potřebuje repository secret CLOUDFLARE_TOKEN (API token s oprávněními
 # „Edit Cloudflare Workers“ + D1 Edit + zóna albiovi.cz).
-# Spouští se každým pushem do větve claude/cloudflare (nasazení) nebo ručně.
+# Spouští se každým pushem do main nebo claude/cloudflare (nasazení) nebo ručně.
 # Každý krok je idempotentní: existující databázi ani klíče znovu nevytváří
 # a migrace spouští jen nové.
 
@@ -12,7 +12,7 @@ name: Cloudflare setup
 on:
   workflow_dispatch:
   push:
-    branches: [claude/cloudflare]
+    branches: [main, claude/cloudflare]
 
 permissions:
   contents: read

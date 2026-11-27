@@ -149,33 +149,25 @@ znovu (aplikace to při dalším otevření udělá sama, pokud už mají povole
 
 ### 4. Nasazení přes Git (automatický deploy po pushi)
 
-1. Cloudflare dashboard → **Workers & Pages → Create → Import a repository**
-   (Connect to Git).
-2. Propoj GitHub účet a vyber repozitář `all-bi/mafie`.
-3. Nastavení:
-   - **Project name:** `mafie` (musí se shodovat s `"name"` ve `wrangler.jsonc`)
-   - **Production branch:** větev, ze které chceš nasazovat (např. `main` po
-     sloučení, nebo `claude/cloudflare` pro test)
-   - **Build command:** nech prázdné (závislosti se nainstalují samy)
-   - **Deploy command:** `npx wrangler deploy`
-   - **Root directory:** `/`
-4. **Save and Deploy.** Každý další push do produkční větve se nasadí sám.
+Nasazování obstarává GitHub Actions, workflow `.github/workflows/cloudflare-setup.yml`
+(„Cloudflare setup“). Spustí se při každém pushi do `main` (a do
+`claude/cloudflare`) a postupně:
 
-**Pozor na pořadí:**
+1. ověří token,
+2. najde databázi `mafie`, případně ji vytvoří,
+3. spustí nové migrace (`wrangler d1 migrations apply --remote`),
+4. nasadí Worker (`wrangler deploy`) včetně domény `mafie.albiovi.cz`,
+5. vygeneruje klíče VAPID, pokud ještě nejsou nastavené.
 
-- Dokud ve `wrangler.jsonc` není skutečné `database_id` (krok 1), každé
-  sestavení selže.
-- Sestavení jiných větví než produkční používají `wrangler versions upload`,
-  které neumí vytvořit nový Durable Object. Proto **poprvé nasaď produkční
-  větev** (nebo ručně `npm run deploy`). Pak už projdou i ostatní větve.
+Každý krok lze bezpečně spustit opakovaně.
 
-První nasazení vytvoří i Durable Object `PushOutbox` (frontu hromadných
-upozornění). Je zdarma na free plánu, s úložištěm SQLite.
+Potřebuje **repository secret `CLOUDFLARE_TOKEN`** (GitHub → Settings → Secrets
+and variables → Actions). Je to API token Cloudflare s oprávněními Workers
+Scripts Edit, D1 Edit, Account Settings Read a Workers Routes Edit pro zónu
+`albiovi.cz` (šablona „Edit Cloudflare Workers“ + D1).
 
-Migrace databáze se při deployi nespouštějí automaticky. Až přibude nový
-soubor v `migrations/`, spusť před pushem `npm run db:migrate:remote`.
-
-Ruční nasazení bez Gitu: `npm run deploy`.
+Vestavěné sestavování v Cloudflare (Workers Builds) je vypnuté, protože by
+nasazovalo podruhé. Ruční nasazení bez Gitu: `npm run deploy`.
 
 ### 5. Vlastní doména mafie.albiovi.cz
 
