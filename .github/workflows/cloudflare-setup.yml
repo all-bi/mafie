@@ -3,9 +3,9 @@
 #
 # Potřebuje repository secret CLOUDFLARE_TOKEN (API token s oprávněními
 # „Edit Cloudflare Workers“ + D1 Edit + zóna albiovi.cz).
-# Spouští se ručně (Actions → Cloudflare setup → Run workflow) nebo změnou
-# tohoto souboru ve větvi claude/cloudflare. Každý krok je idempotentní:
-# existující databázi ani klíče znovu nevytváří.
+# Spouští se každým pushem do větve claude/cloudflare (nasazení) nebo ručně.
+# Každý krok je idempotentní: existující databázi ani klíče znovu nevytváří
+# a migrace spouští jen nové.
 
 name: Cloudflare setup
 
@@ -13,7 +13,6 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/cloudflare]
-    paths: [.github/workflows/cloudflare-setup.yml]
 
 permissions:
   contents: read

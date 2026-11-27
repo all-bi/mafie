@@ -76,7 +76,7 @@
 
   function renderLanding() {
     const joinCode = esc(new URLSearchParams(location.search).get('kod') || '');
-    root.innerHTML = `<main class="landing">
+    root.innerHTML = `<main class="landing landing-${mode}">
       <section class="hero">${brandMark()}<p class="eyebrow">Společenská hra v reálném světě</p>
         <h1>Jeden kruh.<br><em>Jeden vítěz.</em></h1>
         <p class="lede">Nenápadný průvodce vaší hrou Mafie. Každý zná jen svou oběť. O zbytek se postará Kruh.</p>
@@ -98,16 +98,20 @@
           <button type="button" class="link" data-action="mode-transfer">Už hraji na jiném zařízení</button>
           ${iosNeedsInstall() ? '<p class="hint">Na iPhonu fungují upozornění jen z ikony na ploše. Nejdřív zvol Sdílet → Přidat na plochu a připoj se až z ikony.</p>' : ''}
         </form>` : `<form id="create-form">
-          <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
-          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240">Polibkem na tvář bez přítomnosti svědků.</textarea></label>
-          <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor"></label>
-          <label class="check"><input type="checkbox" name="adminPlays" checked><span><b>Hraji také</b><small>Zaživa neuvidíš nic navíc.</small></span></label>
+          <div class="field-row">
+            <label>Název hry<input name="name" required maxlength="60" placeholder="Letní Mafie 2026"></label>
+            <label>Tvoje jméno<input name="adminName" required maxlength="40" placeholder="Organizátor"></label>
+          </div>
+          <label>Jak probíhá vražda?<textarea name="rule" required maxlength="240" rows="2">Polibkem na tvář bez přítomnosti svědků.</textarea></label>
+          <div class="check-row">
+            <label class="check"><input type="checkbox" name="adminPlays" checked><span><b>Hraji také</b><small>Zaživa neuvidíš nic navíc.</small></span></label>
+            <label class="check"><input type="checkbox" name="showRoster"><span><b>Zobrazovat živé a mrtvé</b><small>Výchozí je úplné utajení.</small></span></label>
+          </div>
           <fieldset class="mode-picker"><legend>Práva oběti po vraždě</legend>
             <label class="radio"><input type="radio" name="killMode" value="confirm" checked><span><b>Povinné potvrzení</b><small>Nová oběť se ukáže až po potvrzení zabitého hráče.</small></span></label>
             <label class="radio"><input type="radio" name="killMode" value="appeal"><span><b>Možnost odvolání</b><small>Nová oběť se ukáže ihned. Vraždu lze odvolat do další vraždy stejného vraha.</small></span></label>
             <label class="radio"><input type="radio" name="killMode" value="instant"><span><b>Žádná práva oběti</b><small>Vražda platí okamžitě a nelze ji odvolat.</small></span></label>
           </fieldset>
-          <label class="check"><input type="checkbox" name="showRoster"><span><b>Zobrazovat živé a mrtvé</b><small>Výchozí je úplné utajení.</small></span></label>
           <button class="primary" ${busy ? 'disabled' : ''}>${busy ? 'Zakládám…' : 'Založit hru'}</button>
         </form>`}
         ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ''}
@@ -182,10 +186,12 @@
       <section class="game-head"><p class="eyebrow">${esc(game.code)}</p><h1>${esc(game.name)}</h1>${player ? `<p class="identity">Hraješ jako <strong>${esc(player.name)}</strong></p>` : ''}</section>
       ${error ? `<div class="alert error" role="alert">${esc(error)}</div>` : ''}${content}
       ${admin?.canEnd && game.status === 'active' ? '<section class="admin-zone"><button class="text-danger" data-action="end-open">Předčasně ukončit hru</button></section>' : ''}
+<nav class="footer-links">
       ${game.status !== 'finished' ? `<button class="logout" data-action="refresh" ${busy ? 'disabled' : ''}>Obnovit stav hry</button>` : ''}
       ${pushStatus === 'on' && gameState.push && game.status !== 'finished' ? '<button class="logout" data-action="push-disable">Vypnout upozornění</button>' : ''}
       ${game.status !== 'finished' ? '<button class="logout" data-action="transfer-create">Přenést na jiné zařízení</button>' : ''}
       <button class="logout" data-action="logout">Odhlásit toto zařízení</button>
+      </nav>
       ${killModal(game, player)}${endModal()}${transferModal()}
     </main>`;
     root.dataset.invite = invite.toString();
