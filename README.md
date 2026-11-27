@@ -1,71 +1,291 @@
-# Kruh — hra Mafie (PHP + MySQL)
+# Kruh — hra Mafie (Cloudflare Workers + D1)
 
-Mobilní webová aplikace pro organizaci společenské hry Mafie. Projekt je napsaný v čistém PHP, JavaScriptu a CSS a používá MySQL nebo MariaDB. Nepotřebuje Node.js, Cloudflare ani sestavení před nahráním na hosting.
+Mobilní webová aplikace pro organizaci společenské hry Mafie. Běží zdarma na
+**Cloudflare Workers** (free plán) s databází **Cloudflare D1** na adrese
+`https://mafie.albiovi.cz`.
 
-Zdrojové soubory můžeš bez problému uložit na GitHub. Samotné **GitHub Pages ale PHP ani MySQL nespouštějí**, takže aplikaci je potřeba vystavit na PHP webhostingu; GitHub může sloužit jako repozitář a zdroj pro nasazení.
+- Server: TypeScript + [Hono](https://hono.dev), HTML kostra přes Hono JSX (`src/index.tsx`)
+- Herní logika: `src/game.ts` (přepis `legacy/src/GameService.php`)
+- Databáze: D1 (SQLite), schéma v `migrations/0001_init.sql`
+- Statické soubory: `public/` (Workers Static Assets), service worker `public/sw.js`
+- Push upozornění: `src/push.ts` (Web Push bez knihoven), fronta `src/outbox.ts` (Durable Object)
+- Konfigurace: `wrangler.jsonc`
+- Původní PHP verze: `legacy/` (po otestování smaž)
 
-## Požadavky
+Adresy zůstaly stejné: `/` (a `/index.php`), `POST /api.php`, `/assets/*`,
+pozvánky `/?kod=XXXXXX`.
 
-- PHP 8.1 nebo novější,
-- rozšíření `pdo_mysql`, `mbstring` a `json`,
-- MySQL 8+ nebo MariaDB 10.4+,
-- HTTPS pro bezpečné ukládání hráčských přístupů v prohlížeči.
+Herní pravidla a produktová rozhodnutí jsou popsaná v
+`legacy/docs/PRODUCT_DECISIONS.md`. Při mazání složky `legacy/` si ten
+dokument případně přesuň jinam.
 
-## Instalace na webhosting
+---
 
-1. V administraci hostingu vytvoř prázdnou MySQL databázi a databázového uživatele.
-2. Do databáze importuj soubor `schema.sql` (například přes phpMyAdmin).
-3. Zkopíruj `config.example.php` jako `config.php`.
-4. V `config.php` vyplň server, název databáze, uživatele a heslo.
-5. Nahraj projekt do webového adresáře hostingu, například `public_html`.
-6. Otevři adresu webu v prohlížeči a založ první hru.
+## Lokální vývoj
 
-Soubor `config.php` je v `.gitignore`, takže se heslo do databáze nenahraje na GitHub. Přiložený `.htaccess` navíc na Apache zakazuje přístup ke konfiguraci a instalačnímu SQL přes web.
+Požadavky: Node.js 20+ (doporučeno 22).
 
-### Příklad konfigurace
-
-```php
-<?php
-return [
-    'database' => [
-        'dsn' => 'mysql:host=localhost;port=3306;dbname=kruh;charset=utf8mb4',
-        'username' => 'kruh_user',
-        'password' => 'silne-heslo',
-    ],
-];
+```bash
+npm install
+npm run dev
 ```
 
-Některé hostingy používají jiný server než `localhost`; přesnou hodnotu najdeš v jejich administraci.
+`npm run dev` nejdřív aplikuje migrace na lokální D1 (`.wrangler/state/`) a
+pak spustí `wrangler dev` na `http://127.0.0.1:8787`. Cloudflare účet ani
+přihlášení k tomu nepotřebuješ.
 
-## Lokální spuštění
+Užitečné příkazy:
 
-Připrav lokální MySQL, importuj `schema.sql`, vytvoř `config.php` a spusť:
+| Příkaz | Co dělá |
+|---|---|
+| `npm run typecheck` | kontrola typů TypeScriptu |
+| `npm run test:smoke` | kouřový test API proti běžícímu `npm run dev` (všechny tři režimy, souběh, validace) |
+| `npm run db:migrate:local` | migrace na lokální D1 |
+| `npm run db:migrate:remote` | migrace na produkční D1 |
+| `npm run convert-dump -- dump.sql data.d1.sql` | převod MySQL dumpu pro D1 |
+| `npm run vapid` | vygeneruje klíče pro push upozornění |
+| `npm run test:push` | test push upozornění s falešnou push službou (viz níže) |
 
-```powershell
-php -S 127.0.0.1:8080
+Push upozornění lokálně: spusť `npm run vapid`, oba řádky `VAPID_…` ulož do
+souboru `.dev.vars` a pro `npm run test:push` přidej i řádek
+`PUSH_ALLOW_LOCALHOST=1`. Ten povolí posílání na falešnou push službu na
+127.0.0.1, proto **nikdy nepatří do produkce**. Bez klíčů aplikace běží
+normálně, jen tlačítko „Zapnout upozornění“ se nezobrazí.
+
+---
+
+## Nasazení na Cloudflare krok za krokem
+
+Všechno je na free plánu. Platební kartu není potřeba zadávat.
+
+### 0. Přihlášení
+
+```bash
+npx wrangler login
 ```
 
-Aplikace bude dostupná na `http://127.0.0.1:8080/`.
+### 1. Vytvoření D1 databáze a doplnění ID
 
-## Struktura projektu
+```bash
+npx wrangler d1 create mafie
+```
 
-- `index.php` — hlavní stránka aplikace,
-- `api.php` — jediný JSON endpoint,
-- `src/GameService.php` — herní pravidla a databázové transakce,
-- `src/bootstrap.php` — konfigurace a připojení k MySQL,
-- `assets/app.js` — mobilní uživatelské rozhraní,
-- `assets/app.css` — vzhled aplikace,
-- `schema.sql` — struktura databáze,
-- `config.example.php` — vzor konfigurace.
+Výstup obsahuje `database_id`, například:
 
-## Bezpečnost a herní tajemství
+```
+"database_id": "a1b2c3d4-...."
+```
 
-- Hráčská a administrátorská oprávnění tvoří náhodné tokeny; databáze ukládá jen jejich SHA-256 otisky.
-- Každá odpověď API je přizpůsobená konkrétnímu hráči. Celý kruh se neposílá do prohlížeče.
-- Změny vražd probíhají v MySQL transakcích se zamčením dotčených záznamů.
-- Jména a pravidla se v rozhraní vždy escapují před vložením do HTML.
-- Statistiky jsou dostupné až po ukončení hry.
+Toto ID vlož do `wrangler.jsonc` místo `00000000-0000-0000-0000-000000000000`,
+commitni a pushni. ID není tajný údaj, do repozitáře patří.
 
-## Aktualizace
+(Alternativa: Cloudflare dashboard → **Storage & Databases → D1 SQL Database →
+Create**, název `mafie`, ID zkopíruješ z detailu databáze.)
 
-Před nahráním nové verze zazálohuj databázi a `config.php`. Pokud budoucí verze obsahuje databázovou migraci, spusť ji před aktualizací PHP souborů.
+### 2. Migrace a import dat
+
+Vytvoření tabulek v produkční databázi:
+
+```bash
+npm run db:migrate:remote
+```
+
+Import dat ze staré MySQL databáze:
+
+1. Na původním hostingu vyexportuj databázi (phpMyAdmin → Export → SQL, nebo
+   `mysqldump --no-create-info --skip-extended-insert kruh > dump.sql`).
+   Stačí data. Strukturu skript ignoruje.
+2. Ulož export jako `dump.sql` do kořene projektu. Je v `.gitignore`, do
+   repozitáře se nedostane.
+3. Převeď ho:
+   ```bash
+   npm run convert-dump -- dump.sql data.d1.sql
+   ```
+   Skript vypíše počty her, hráčů a hlášení a případná upozornění.
+4. Nahraj ho do D1:
+   ```bash
+   npx wrangler d1 execute mafie --remote --file=data.d1.sql
+   ```
+5. Kontrola:
+   ```bash
+   npx wrangler d1 execute mafie --remote --command "SELECT status, COUNT(*) FROM games GROUP BY status"
+   ```
+
+Import spouštěj do prázdné databáze, jen jednou. Pokud se nepovede, smaž data:
+
+```bash
+npx wrangler d1 execute mafie --remote --command "DELETE FROM kill_reports; UPDATE games SET admin_player_id = NULL; DELETE FROM players; DELETE FROM games;"
+```
+
+Pak import opakuj. Otisky přístupových tokenů se převádějí beze změny, takže
+existující přístupy hráčů zůstanou platné (viz „Co se chová jinak“).
+
+### 3. Secrets (klíče pro push upozornění)
+
+Jediné tajné údaje jsou klíče VAPID, kterými server podepisuje push upozornění.
+Heslo k databázi už potřeba není, D1 se připojuje přes binding ve `wrangler.jsonc`.
+
+1. Vygeneruj klíče:
+   ```bash
+   npm run vapid
+   ```
+2. Ulož je do Cloudflare. Každý příkaz se zeptá na hodnotu, vlož ji z výpisu:
+   ```bash
+   npx wrangler secret put VAPID_PUBLIC_KEY
+   npx wrangler secret put VAPID_PRIVATE_KEY
+   ```
+   (nebo v dashboardu: **Workers & Pages → mafie → Settings → Variables
+   and Secrets → Add → Secret**)
+
+| Secret | Co to je |
+|---|---|
+| `VAPID_PUBLIC_KEY` | veřejný klíč (posílá se i prohlížečům) |
+| `VAPID_PRIVATE_KEY` | privátní klíč, **nikdy ho necommituj ani neposílej** |
+
+`VAPID_SUBJECT` (kontakt pro push služby) je veřejný a je ve `wrangler.jsonc`
+v sekci `vars`. Secrets se při nasazování z Gitu zachovávají a stačí je
+nastavit jednou. Když privátní klíč změníš, hráči musí upozornění zapnout
+znovu (aplikace to při dalším otevření udělá sama, pokud už mají povolení).
+
+### 4. Nasazení přes Git (automatický deploy po pushi)
+
+Nasazování obstarává GitHub Actions, workflow `.github/workflows/cloudflare-setup.yml`
+(„Cloudflare setup“). Spustí se při každém pushi do `main` (a do
+`claude/cloudflare`) a postupně:
+
+1. ověří token,
+2. najde databázi `mafie`, případně ji vytvoří,
+3. spustí nové migrace (`wrangler d1 migrations apply --remote`),
+4. nasadí Worker (`wrangler deploy`) včetně domény `mafie.albiovi.cz`,
+5. vygeneruje klíče VAPID, pokud ještě nejsou nastavené.
+
+Každý krok lze bezpečně spustit opakovaně.
+
+Potřebuje **repository secret `CLOUDFLARE_TOKEN`** (GitHub → Settings → Secrets
+and variables → Actions). Je to API token Cloudflare s oprávněními Workers
+Scripts Edit, D1 Edit, Account Settings Read a Workers Routes Edit pro zónu
+`albiovi.cz` (šablona „Edit Cloudflare Workers“ + D1).
+
+Vestavěné sestavování v Cloudflare (Workers Builds) je vypnuté, protože by
+nasazovalo podruhé. Ruční nasazení bez Gitu: `npm run deploy`.
+
+### 5. Vlastní doména mafie.albiovi.cz
+
+Zóna `albiovi.cz` už je na Cloudflare a `wrangler.jsonc` obsahuje:
+
+```jsonc
+"routes": [{ "pattern": "mafie.albiovi.cz", "custom_domain": true }]
+```
+
+Při deployi Cloudflare doménu sám připojí: vytvoří DNS záznam i HTTPS
+certifikát. Pokud už v DNS existuje záznam `app` (A, AAAA nebo CNAME),
+**nejdřív ho v DNS smaž**, jinak se doména nepřipojí.
+
+Ruční varianta: **Workers & Pages → mafie → Settings → Domains & Routes →
+Add → Custom domain** → `mafie.albiovi.cz`.
+
+Jiná subdoména: změň `pattern` ve `wrangler.jsonc`. Aplikace je dostupná i na
+`mafie.<účet>.workers.dev`. Když to nechceš, nastav `"workers_dev": false`.
+
+---
+
+## Limity free plánu a na co dát pozor
+
+Ověřeno v dokumentaci Cloudflare (listopad 2026):
+
+| Limit | Hodnota | Dopad na aplikaci |
+|---|---|---|
+| Požadavky na Worker | 100 000 / den | Hlavní omezení, viz níže. Statické soubory (CSS, JS, obrázek) jsou podle Cloudflare zdarma a neomezené. |
+| CPU čas | 10 ms / požadavek | Běžný požadavek spotřebuje zlomek. Čekání na D1 se nepočítá. |
+| D1 čtení | 5 mil. řádků / den | Jeden dotaz na stav přečte zhruba počet hráčů + 10 řádků. |
+| D1 zápisy | 100 000 řádků / den | Nevýznamné. |
+| D1 velikost | 500 MB | Nevýznamné. |
+| Dotazy na jeden požadavek | 50 (batch = 1) | Aplikace používá nejvýš 4 batche. |
+| Podpožadavky (fetch) | 50 / spuštění | Push zprávy se posílají nejvýš po 6 v jednom spuštění. |
+| Durable Objects | 100 000 požadavků / den | Jen fronta hromadných upozornění: zhruba 10 spuštění na začátek nebo konec hry. |
+
+**Obnovování stavu** (cíl: 50 hráčů, 24 hodin hraní denně):
+
+- Živý hráč a organizátor obnovují stav 1× za minutu, mrtvý hráč 1× za 5 minut.
+- Skrytá stránka (jiná aplikace, zamčený telefon) a skončená hra se neobnovují vůbec.
+- Navíc se stav načte ihned po vlastní akci, při návratu do aplikace
+  (nejvýš 1× za 30 s) a tlačítkem „Obnovit stav hry“.
+- Když se ve hře od posledního dotazu nic nezměnilo, server odpoví jen „beze
+  změny“ a z D1 přečte 2 řádky místo 12–62.
+
+Propočet nejhoršího případu, kdy všech 50 hráčů celých 24 h zírá na otevřenou
+aplikaci a nikdo neumře:
+
+| | Výpočet | Výsledek | Limit |
+|---|---|---|---|
+| Požadavky | 50 × 60/h × 24 h | 72 000 + akce a načtení stránky | 100 000 / den |
+| D1 čtení (beze změny) | 72 000 × 2 řádky | ~144 000 | 5 000 000 / den |
+| D1 čtení (po změně) | 200 změn × 50 hráčů × 62 řádků | ~620 000 | |
+
+Ve skutečnosti je spotřeba mnohem nižší: mrtví se ptají 5× méně a zamčené
+telefony vůbec. Po překročení limitu by Cloudflare až do půlnoci UTC vracel
+chybu 1027 / 429. Intervaly se nastavují na začátku sekce obnovování
+v `public/assets/app.js` (`POLL_ALIVE_MS`, `POLL_DEAD_MS`).
+
+**CPU:** nejdražší jsou statistiky po skončení hry (počet hráčů × počet vražd)
+a šifrování push zpráv (asi 0,8 ms na zprávu). Zprávy pro 1–3 lidi (vražda,
+potvrzení) se pošlou přímo. Hromadné zprávy (začátek a konec hry pro 50 hráčů
+zabere ~40 ms CPU) se uloží do Durable Objectu a ten je rozešle po 6. Každá
+dávka běží jako samostatné spuštění alarmu s vlastním limitem 10 ms. Všem
+dorazí do pár sekund. Spuštění hry s 25 hráči i souběžné připojení 25 hráčů
+jsem lokálně otestoval. V produkci můžeš CPU čas sledovat v dashboardu:
+**Worker → Metrics / Observability**.
+
+**Zálohy:** D1 Time Travel umožňuje obnovit databázi do libovolného okamžiku
+za posledních 7 dní (`npx wrangler d1 time-travel restore`). Ruční export:
+`npx wrangler d1 export mafie --remote --output=zaloha.sql`.
+
+---
+
+## Bezpečnost
+
+- Hráčská a organizátorská oprávnění jsou náhodné 256bitové tokeny. Databáze
+  ukládá jen jejich SHA-256 otisky. Organizátorský token se porovnává
+  v konstantním čase.
+- Tokeny posílá klient v těle JSON, ne v cookies, takže CSRF útok nemá čeho
+  zneužít. API navíc přijímá jen `Content-Type: application/json` a odmítá
+  požadavky s cizí hlavičkou `Origin`.
+- Všechny SQL dotazy jsou prepared statements s `.bind()`.
+- Vstupy se ořezávají a validují: délka ve znacích, odstranění řídicích znaků,
+  formát UUID, tokenu a kódu hry, limit velikosti požadavku 16 kB.
+- Výstupy escapuje `public/assets/app.js` (beze změny oproti PHP verzi).
+- HTML stránka má stejnou CSP a další bezpečnostní hlavičky jako `index.php`.
+- Souběžné požadavky: D1 nemá `SELECT … FOR UPDATE`. Každá změna se proto
+  zapisuje jedním atomickým `batch()` s kontrolou verze hry (optimistické
+  zamykání). Při kolizi se akce automaticky zopakuje nad čerstvými daty.
+  Kruh tak nemůže být porušen.
+
+---
+
+## Push upozornění
+
+Hráč si je zapne tlačítkem „Zapnout upozornění“ ve hře. Zprávy nikdy
+neobsahují jména, protože se zobrazují i na zamčené obrazovce:
+
+| Komu | Kdy | Text |
+|---|---|---|
+| všem hráčům | hra začala | Hra začala — Podívej se, kdo je tvoje oběť. |
+| oběti | vražda (potvrzení / odvolání / okamžitě) | Byl/a jsi zabit/a? … / Byl/a jsi zabit/a. … |
+| vrahovi | oběť potvrdila | Vražda potvrzena — Máš novou oběť. |
+| vrahovi | oběť odmítla / odvolala | Oběť vraždu odmítla / Vražda byla odvolána |
+| všem + organizátorovi | hra skončila | Hra skončila — Podívej se na výsledky. |
+
+Když je aplikace otevřená, upozornění ji zároveň hned obnoví.
+
+**iPhone:** iOS posílá upozornění jen aplikaci přidané na plochu (iOS 16.4+).
+Aplikace na ploše má oddělené úložiště od Safari, proto přibyl **přenos na jiné
+zařízení**: ve hře „Přenést na jiné zařízení“ vytvoří jednorázový kód (platí
+10 minut) a na úvodní stránce se zadá přes „Už hraji na jiném zařízení“.
+Funguje i pro přechod na nový telefon. Nejjednodušší je přidat Kruh na plochu
+ještě před připojením do hry.
+
+**Bezpečnost:** server posílá zprávy jen na adresy známých push služeb
+(Google, Apple, Mozilla, Microsoft), jiné adresy odběru odmítne. Neplatné
+odběry (telefon odinstaloval prohlížeč a podobně) maže automaticky. Kód
+přenosu je jednorázový a přístupové údaje k němu jsou v D1 zašifrované klíčem
+odvozeným z kódu, který server neukládá.

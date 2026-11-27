@@ -1,0 +1,48 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "mafie",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Statické soubory (CSS, JS, obrázky). Požadavky na existující soubor
+  // obslouží Cloudflare přímo a nezapočítávají se do limitu Workeru.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mafie",
+      // ID produkční databáze (vytvořena workflow Cloudflare setup).
+      "database_id": "76e74f46-a058-4bfb-889e-0030c6443d69",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Fronta hromadných push upozornění (Durable Object s úložištěm SQLite,
+  // dostupné na free plánu).
+  "durable_objects": {
+    "bindings": [{ "name": "PUSH_OUTBOX", "class_name": "PushOutbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PushOutbox"] }],
+
+  // Veřejné nastavení push upozornění. Klíče VAPID_PUBLIC_KEY a VAPID_PRIVATE_KEY
+  // se nastavují jako secrets (viz README), nikdy ne sem.
+  "vars": {
+    "VAPID_SUBJECT": "https://mafie.albiovi.cz"
+  },
+
+  // Vlastní doména. Zóna albiovi.cz musí být na Cloudflare (je).
+  // Pokud chceš jinou subdoménu, změň "pattern".
+  "routes": [
+    { "pattern": "mafie.albiovi.cz", "custom_domain": true }
+  ],
+
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true }
+}

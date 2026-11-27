@@ -1,0 +1,11 @@
+/assets/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: same-origin
+
+/sw.js
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff
+
+/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  X-Content-Type-Options: nosniff

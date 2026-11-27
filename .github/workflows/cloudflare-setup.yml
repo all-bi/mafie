@@ -1,0 +1,122 @@
+# Jednorázové (a opakovatelné) nastavení Cloudflare: D1 databáze, migrace,
+# nasazení Workeru a klíče VAPID pro push upozornění.
+#
+# Potřebuje repository secret CLOUDFLARE_TOKEN (API token s oprávněními
+# „Edit Cloudflare Workers“ + D1 Edit + zóna albiovi.cz).
+# Spouští se každým pushem do main nebo claude/cloudflare (nasazení) nebo ručně.
+# Každý krok je idempotentní: existující databázi ani klíče znovu nevytváří
+# a migrace spouští jen nové.
+
+name: Cloudflare setup
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/cloudflare]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-setup
+  cancel-in-progress: false
+
+env:
+  # Surová hodnota; ořezaný token se exportuje jako CLOUDFLARE_API_TOKEN v kroku ověření.
+  CF_TOKEN_RAW: ${{ secrets.CLOUDFLARE_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: 20fad3598c1bdc2e46b244920847eeca
+  DB_NAME: mafie
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Ověření tokenu
+        run: |
+          raw="$CF_TOKEN_RAW"
+          if [ -z "$raw" ]; then echo "::error::Chybí secret CLOUDFLARE_TOKEN"; exit 1; fi
+          # Odstranit mezery a konce řádků, které se mohly přidat při vkládání.
+          token=$(printf '%s' "$raw" | tr -d '[:space:]')
+          echo "::add-mask::$token"
+          [ "$token" != "$raw" ] && echo "Pozn.: ze secretu byly odstraněny mezery/konce řádků."
+          echo "Délka tokenu: ${#token} znaků"
+          if [[ "$token" =~ ^[0-9a-f]{37}$ ]]; then
+            echo "::error::Tohle vypadá jako Global API Key, ne API token. Vytvoř API token (My Profile → API Tokens → Create Token)."
+            exit 1
+          fi
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
+          ok=0
+          for url in "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+                     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify"; do
+            body=$(curl -sS -H "Authorization: Bearer $token" "$url")
+            echo "$url -> $(printf '%s' "$body" | jq -c '{success, status: .result.status, errors: [.errors[]?.message]}')"
+            if [ "$(printf '%s' "$body" | jq -r '.success')" = "true" ]; then ok=1; fi
+          done
+          if [ "$ok" != 1 ]; then echo "::error::Cloudflare token odmítl (neplatný, zrušený nebo nezkopírovaný celý)."; exit 1; fi
+
+      - name: D1 databáze (najít nebo vytvořit)
+        id: db
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database"
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          echo "Účty dostupné s tímto tokenem:"
+          curl -sS "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts" | jq -c '{success, errors: [.errors[]?.message], accounts: [.result[]? | {id, name}]}'
+          list=$(curl -sS "${auth[@]}" "$api?name=$DB_NAME")
+          if [ "$(printf '%s' "$list" | jq -r '.success')" != "true" ]; then
+            echo "::error::D1 API: $(printf '%s' "$list" | jq -c '[.errors[]? | {code, message}]')"
+            exit 1
+          fi
+          id=$(printf '%s' "$list" | jq -r --arg n "$DB_NAME" '.result[] | select(.name == $n) | .uuid' | head -n1)
+          if [ -z "$id" ]; then
+            echo "Databáze $DB_NAME neexistuje, vytvářím…"
+            id=$(curl -fsS "${auth[@]}" -H "Content-Type: application/json" -X POST "$api" \
+              --data "{\"name\":\"$DB_NAME\"}" | jq -r '.result.uuid')
+          fi
+          if ! [[ "$id" =~ ^[0-9a-f-]{36}$ ]]; then echo "::error::Nepodařilo se získat ID databáze"; exit 1; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "### D1 database_id: \`$id\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "D1_DATABASE_ID=$id"
+          # Doplnit ID do konfigurace v pracovní kopii (commit udělá člověk/Claude).
+          sed -i "s/00000000-0000-0000-0000-000000000000/$id/" wrangler.jsonc
+          grep -n '"database_id"' wrangler.jsonc
+
+      - name: Migrace databáze
+        run: npx wrangler d1 migrations apply DB --remote
+
+      - name: Nasazení Workeru
+        run: npx wrangler deploy
+
+      - name: Klíče VAPID pro push upozornění (jen pokud chybí)
+        run: |
+          existing=$(npx wrangler secret list --format json 2>/dev/null | jq -r '.[].name' || true)
+          if echo "$existing" | grep -qx VAPID_PRIVATE_KEY && echo "$existing" | grep -qx VAPID_PUBLIC_KEY; then
+            echo "Klíče VAPID už jsou nastavené, nic neměním."
+            exit 0
+          fi
+          out=$(node scripts/generate-vapid.mjs)
+          pub=$(printf '%s\n' "$out" | sed -n 's/^VAPID_PUBLIC_KEY=//p')
+          priv=$(printf '%s\n' "$out" | sed -n 's/^VAPID_PRIVATE_KEY=//p')
+          echo "::add-mask::$priv"
+          printf '%s' "$pub" | npx wrangler secret put VAPID_PUBLIC_KEY
+          printf '%s' "$priv" | npx wrangler secret put VAPID_PRIVATE_KEY
+          echo "Klíče VAPID vygenerovány a uloženy jako secrets."
+
+      - name: Kontrola nasazení
+        run: |
+          sleep 5
+          for url in "https://mafie.albiovi.cz/" ; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
+            echo "$url -> HTTP $code"
+          done
+          curl -s -X POST -H 'Content-Type: application/json' -d '{"action":"state","gameId":"00000000-0000-4000-8000-000000000000"}' \
+            https://mafie.albiovi.cz/api.php || true
