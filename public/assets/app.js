@@ -12,7 +12,6 @@
   let endStep = 0;
   let endText = '';
   let copied = false;
-  let timer = null;
 
   function esc(value) {
     return String(value ?? '')
@@ -66,7 +65,7 @@
       gameState = await api({ action: 'state', ...credentials });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Akci se nepodařilo dokončit.';
-    } finally { busy = false; render(); schedulePoll(); }
+    } finally { busy = false; render(); }
   }
 
   function brandMark() { return '<div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>'; }
@@ -171,6 +170,7 @@
       <section class="game-head"><p class="eyebrow">${esc(game.code)}</p><h1>${esc(game.name)}</h1>${player ? `<p class="identity">Hraješ jako <strong>${esc(player.name)}</strong></p>` : ''}</section>
       ${error ? `<div class="alert error" role="alert">${esc(error)}</div>` : ''}${content}
       ${admin?.canEnd && game.status === 'active' ? '<section class="admin-zone"><button class="text-danger" data-action="end-open">Předčasně ukončit hru</button></section>' : ''}
+      ${game.status !== 'finished' ? `<button class="logout" data-action="refresh" ${busy ? 'disabled' : ''}>Obnovit stav hry</button>` : ''}
       <button class="logout" data-action="logout">Odhlásit toto zařízení</button>
       ${killModal(game, player)}${endModal()}
     </main>`;
@@ -198,7 +198,6 @@
       const response = await api(payload);
       saveCredentials(response.credentials);
       gameState = await api({ action: 'state', ...credentials });
-      startPolling();
     } catch (cause) { error = cause instanceof Error ? cause.message : 'Akce se nepodařila.'; }
     finally { busy = false; render(); }
   });
@@ -230,35 +229,24 @@
     if (action === 'end-final-step') { endStep = 3; render(); }
     if (action === 'end-cancel') { endStep = 0; endText = ''; render(); }
     if (action === 'end-confirm') { endStep = 0; endText = ''; await act('end'); }
-    if (action === 'logout') { stopPolling(); saveCredentials(null); gameState = null; error = ''; render(); }
+    if (action === 'refresh') { lastRefresh = Date.now(); await refresh(); }
+    if (action === 'logout') { saveCredentials(null); gameState = null; error = ''; render(); }
   });
 
-  // Šetrné obnovování stavu: jen když je stránka vidět, delší interval
-  // pro mrtvé hráče a žádné dotazy po skončení hry.
-  function pollDelay() {
-    if (!gameState) return 10000;
-    if (gameState.game?.status === 'finished') return 0;
-    if (gameState.player?.status === 'dead' && !gameState.incoming) return 30000;
-    return 10000;
+  // Stav se načítá jen při otevření stránky, po vlastní akci a když se stránka
+  // znovu zobrazí (návrat do záložky / odemčení telefonu). Žádné pravidelné dotazy.
+  let lastRefresh = 0;
+  async function refreshOnShow() {
+    if (!credentials || document.hidden || busy) return;
+    if (gameState?.game?.status === 'finished') return;
+    if (Date.now() - lastRefresh < 2000) return;
+    lastRefresh = Date.now();
+    await refresh(true);
   }
-  function schedulePoll() {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    if (!credentials || document.hidden) return;
-    const delay = pollDelay();
-    if (!delay) return;
-    timer = setTimeout(async () => { timer = null; await refresh(true); schedulePoll(); }, delay);
-  }
-  function startPolling() { schedulePoll(); }
-  function stopPolling() { if (timer) clearTimeout(timer); timer = null; }
-
-  document.addEventListener('visibilitychange', async () => {
-    if (!credentials) return;
-    if (document.hidden) { stopPolling(); return; }
-    if (gameState?.game?.status !== 'finished') await refresh(true);
-    schedulePoll();
-  });
+  document.addEventListener('visibilitychange', refreshOnShow);
+  window.addEventListener('focus', refreshOnShow);
+  window.addEventListener('pageshow', event => { if (event.persisted) refreshOnShow(); });
 
   render();
-  if (credentials) { refresh().then(startPolling); }
+  if (credentials) { lastRefresh = Date.now(); refresh(); }
 })();

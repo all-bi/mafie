@@ -174,12 +174,12 @@ Ověřeno v dokumentaci Cloudflare (listopad 2026):
 | D1 velikost | 500 MB | Nevýznamné. |
 | Dotazy na jeden požadavek | 50 (batch = 1) | Aplikace používá nejvýš 4 batche. |
 
-**Obnovování stavu:** aplikace se ptá serveru na novinky každých 10 s, mrtvý
-hráč jednou za 30 s. Na pozadí (skrytá záložka, zamčený telefon) a po skončení
-hry se neptá vůbec. Při 20 hráčích s otevřenou aplikací to je asi
-7 000 požadavků za hodinu, takže limit vystačí zhruba na 14 hodin souvislého
-hraní denně. Po překročení vrací Cloudflare až do půlnoci UTC chybu 1027 /
-429. Další hra pak funguje zase od nového dne.
+**Obnovování stavu:** aplikace se serveru pravidelně neptá. Stav načte při
+otevření stránky, po vlastní akci (vražda, potvrzení, spuštění…), při návratu
+do záložky nebo odemčení telefonu a po klepnutí na odkaz „Obnovit stav hry“.
+Spotřeba je tak jen několik požadavků na hráče za hodinu. Denní limit
+100 000 požadavků je pro běžné hraní prakticky nedosažitelný. Po překročení by
+Cloudflare až do půlnoci UTC vracel chybu 1027 / 429.
 
 **CPU:** nejdražší jsou statistiky po skončení hry (počet hráčů × počet vražd).
 I pro stovky hráčů jde o jednotky milisekund. Spuštění hry s 25 hráči i souběžné
