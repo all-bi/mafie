@@ -308,3 +308,11 @@ form .link{margin-top:0;padding:6px}
 @media (max-width:600px){.self-report{margin-top:6px}}
 .reveal-hint .motion-link{display:inline;margin:0;padding:0;font-size:inherit;color:inherit}
 @media (max-width:600px){.admin-zone{margin-top:6px;padding-top:4px}.admin-zone .text-danger{padding:6px}}
+/* iOS Safari rozmazává pruh pod horní hranou: obsah začíná až pod ním. */
+@media (max-width:600px){
+.landing{padding-top:calc(26px + env(safe-area-inset-top, 0px))}
+.app-shell{padding-top:calc(26px + env(safe-area-inset-top, 0px))}
+.topbar{padding-bottom:8px}
+.game-head{padding-top:8px;padding-bottom:10px}
+.landing-create .hero{padding-top:0}
+}
