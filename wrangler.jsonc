@@ -17,8 +17,8 @@
     {
       "binding": "DB",
       "database_name": "mafie",
-      // Doplň ID z výstupu `npx wrangler d1 create mafie` (viz README).
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // ID produkční databáze (vytvořena workflow Cloudflare setup).
+      "database_id": "76e74f46-a058-4bfb-889e-0030c6443d69",
       "migrations_dir": "migrations"
     }
   ],
