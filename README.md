@@ -1,4 +1,4 @@
-# Kruh — hra Mafie (Cloudflare Workers + D1)
+# Mafie — společenská hra (Cloudflare Workers + D1)
 
 Mobilní webová aplikace pro organizaci společenské hry Mafie. Běží zdarma na
 **Cloudflare Workers** (free plán) s databází **Cloudflare D1** na adrese

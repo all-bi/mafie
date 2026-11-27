@@ -35,17 +35,17 @@ const Page: FC = () => (
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <meta name="theme-color" content="#f2efe7" />
-      <meta name="description" content="Soukromý organizátor hry Mafie pro přátele." />
-      <meta property="og:title" content="Kruh" />
-      <meta property="og:description" content="Jeden kruh. Jeden vítěz." />
+      <meta name="description" content="Diskrétní průvodce společenskou hrou Mafie pro přátele." />
+      <meta property="og:title" content="Mafie" />
+      <meta property="og:description" content="Každý má cíl. Přežije jeden." />
       <meta property="og:image" content="assets/og.png" />
-      <meta name="apple-mobile-web-app-title" content="Kruh" />
+      <meta name="apple-mobile-web-app-title" content="Mafie" />
       <meta name="mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-capable" content="yes" />
       <link rel="manifest" href="manifest.webmanifest" />
       <link rel="icon" href="assets/icon-192.png" type="image/png" />
       <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
-      <title>Kruh — hra Mafie</title>
+      <title>Mafie — společenská hra</title>
       <link rel="stylesheet" href="assets/app.css" />
       <script src="assets/app.js" defer></script>
     </head>

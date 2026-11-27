@@ -1,7 +1,7 @@
 {
-  "name": "Kruh — hra Mafie",
-  "short_name": "Kruh",
-  "description": "Soukromý organizátor hry Mafie pro přátele.",
+  "name": "Mafie — společenská hra",
+  "short_name": "Mafie",
+  "description": "Diskrétní průvodce společenskou hrou Mafie pro přátele.",
   "lang": "cs",
   "scope": "/",
   "display": "standalone",

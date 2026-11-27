@@ -128,8 +128,8 @@ export class GameService {
     }
     if (nameKey(adminName) === '') throw new DomainError('Zadej své jméno.');
 
-    let killMode = str(input.killMode || 'confirm') as KillMode;
-    if (!['confirm', 'appeal', 'instant'].includes(killMode)) killMode = 'confirm';
+    let killMode = str(input.killMode || 'appeal') as KillMode;
+    if (!['confirm', 'appeal', 'instant'].includes(killMode)) killMode = 'appeal';
 
     const gameId = uuidV4();
     const adminToken = accessToken();
