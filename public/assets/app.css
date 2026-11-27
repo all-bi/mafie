@@ -296,3 +296,11 @@ form .link{margin-top:0;padding:6px}
 .landing-create textarea{height:56px}
 .landing-create .mode-picker{gap:6px;padding:8px 12px}
 }
+/* Tečka u jména: nesmí převzít styl karty .dead („Byl/a jsi zabit/a“). */
+.player-dot,.player-dot.dead{padding:0;flex-shrink:0;width:8px;height:8px;text-align:initial}
+/* Spodní odkazy: zalomit, nikdy nepřetéct do strany. */
+.footer-links,.footer-links .logout{max-width:100%}
+@media (max-width:600px){
+.footer-links{flex-wrap:wrap;gap:0 14px}
+.footer-links .logout{white-space:nowrap;font-size:12px}
+}

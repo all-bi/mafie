@@ -258,7 +258,12 @@ export class GameService {
     // Druhá dávka: všechno, co závisí na hře/hráči, jedním round-tripem.
     const queries: Record<string, D1PreparedStatement> = {};
     if (game.admin_player_id) {
-      queries.admin = this.db.prepare('SELECT status FROM players WHERE id = ?').bind(game.admin_player_id);
+      // Hrající organizátor je „mimo hru“ až po definitivní smrti: dokud může vraždu
+      // potvrdit nebo odvolat, nesmí vidět nic navíc.
+      queries.admin = this.db.prepare(
+        `SELECT p.status, EXISTS (SELECT 1 FROM kill_reports r WHERE r.victim_id = p.id AND r.status IN ('pending', 'provisional')) AS open_kill
+         FROM players p WHERE p.id = ?`,
+      ).bind(game.admin_player_id);
     }
     if (player) {
       if (player.target_id && player.target_id !== player.id) {
@@ -300,7 +305,8 @@ export class GameService {
       return index === -1 ? [] : (results[index]!.results as Record<string, unknown>[]);
     };
 
-    const adminIsAlive = rows('admin')[0]?.status === 'alive';
+    const adminRow = rows('admin')[0];
+    const adminIsAlive = adminRow?.status === 'alive' || Boolean(adminRow?.open_kill);
     const canManage = isAdmin && !(game.status === 'active' && adminIsAlive);
 
     const response: Json = { game: publicGame(game), version: game.version };
